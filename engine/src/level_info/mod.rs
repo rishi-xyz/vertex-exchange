@@ -1,3 +1,8 @@
+//! Orderbook depth snapshot types.
+//!
+//! Provides [`LevelInfo`](crate::level_info::LevelInfo) (a single price level) and [`OrderBookLevelInfo`](crate::level_info::OrderBookLevelInfo)
+//! (a full book snapshot) for read-only queries. These are cheap to construct
+
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
@@ -58,14 +63,14 @@ impl OrderBookLevelInfo {
     }
 }
 
-pub trait getOrderBookLevelInfos {
+pub trait GetOrderBookLevelInfos {
     /// Returns the bid levels reference (ascending by price; best bid is last).
     fn get_bids(&self) -> &LevelInfos;
     /// Returns the ask levels reference (ascending by price; best ask is first).
     fn get_asks(&self) -> &LevelInfos;
 }
 
-impl getOrderBookLevelInfos for OrderBookLevelInfo {
+impl GetOrderBookLevelInfos for OrderBookLevelInfo {
     fn get_asks(&self) -> &LevelInfos {
         return &self.asks;
     }
