@@ -16,7 +16,10 @@
 //! The [`CoreEngine`](crate::engine::CoreEngine) calls [`Order::set_order_id`](crate::order::Order::set_order_id)
 //! to stamp a real snowflake ID before the order enters the book.
 
-use std::{collections::VecDeque, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::VecDeque,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -87,8 +90,7 @@ impl Order {
         side: Side,
         status: OrderStatus,
         price: Price,
-        initial_quantity: Quantity,
-        remaining_quantity: Quantity,
+        quantity: Quantity,
         user_id: UserId,
     ) -> Self {
         let ts: u64 = SystemTime::now()
@@ -101,8 +103,8 @@ impl Order {
             side,
             status,
             price,
-            initial_quantity,
-            remaining_quantity,
+            initial_quantity: quantity,
+            remaining_quantity: quantity,
             timestamp: ts,
             user_id,
         }
@@ -189,7 +191,7 @@ impl Order {
     /// ```
     pub fn fills(&mut self, quantity: Quantity) -> Result<(), String> {
         if quantity > self.remaining_quantity {
-            // tracing warn 
+            // tracing warn
             return Err(format!(
                 "Order {} cannot be filled for more than its remaining quantity",
                 self.get_order_id()
@@ -204,8 +206,6 @@ impl Order {
         // tracing debug
         Ok(())
     }
-
-
 }
 
 /// A deque of orders at a single price level, ordered by time of arrival (FIFO).
