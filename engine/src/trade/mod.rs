@@ -5,8 +5,6 @@
 //! for the sell side. The engine stamps the trade with a snowflake ID and timestamp
 //! after the orderbook produces it.
 
-use std::collections::VecDeque;
-
 use serde::{Deserialize, Serialize};
 
 use crate::types::{OrderId, Price, Quantity, TradeId, UserId};
@@ -14,7 +12,7 @@ use crate::types::{OrderId, Price, Quantity, TradeId, UserId};
 /// A snapshot of one side of a matched trade.
 ///
 /// Captures the order ID, price, quantity, and user of either the bid or ask
-/// side at the moment of the fill. Stored as an immutable `Arc` inside [`Trade`].
+/// side at the moment of the fill. Stored inside [`Trade`].
 ///
 /// # Examples
 ///
@@ -51,33 +49,24 @@ impl TradeInfo {
             user_id,
         }
     }
-}
 
-pub trait GetTradeInfo {
     /// Returns the ID of the filled order.
-    fn get_order_id(&self) -> OrderId;
-    /// Returns the execution price of this fill.
-    fn get_price(&self) -> Price;
-    /// Returns the number of base units matched.
-    fn get_quantity(&self) -> Quantity;
-    /// Returns the UUID of the order's owner.
-    fn get_user_id(&self) -> UserId;
-}
-
-impl GetTradeInfo for TradeInfo {
-    fn get_order_id(&self) -> OrderId {
+    pub fn get_order_id(&self) -> OrderId {
         self.order_id
     }
 
-    fn get_price(&self) -> Price {
+    /// Returns the execution price of this fill.
+    pub fn get_price(&self) -> Price {
         self.price
     }
 
-    fn get_quantity(&self) -> Quantity {
+    /// Returns the number of base units matched.
+    pub fn get_quantity(&self) -> Quantity {
         self.quantity
     }
 
-    fn get_user_id(&self) -> UserId {
+    /// Returns the UUID of the order's owner.
+    pub fn get_user_id(&self) -> UserId {
         self.user_id
     }
 }
@@ -134,48 +123,34 @@ impl Trade {
             ask_trade,
         }
     }
-}
 
-pub trait GetTrade {
-    fn get_trade_id(&self) -> TradeId;
-    fn get_timestamp(&self) -> u64;
-    fn get_bid_trade_info(&self) -> &TradeInfo;
-    fn get_ask_trade_info(&self) -> &TradeInfo;
-}
-
-pub trait SetTrade {
-    /// Overwrites the trade ID. Called by the engine to stamp the real snowflake ID.
-    fn set_trade_id(&mut self, id: TradeId);
-    /// Overwrites the timestamp. Called by the engine to stamp the real fill time.
-    fn set_timestamp(&mut self, ts: u64);
-}
-
-impl GetTrade for Trade {
-    fn get_trade_id(&self) -> TradeId {
+    /// Returns the snowflake trade ID.
+    pub fn get_trade_id(&self) -> TradeId {
         self.trade_id
     }
 
-    fn get_timestamp(&self) -> u64 {
+    /// Returns the nanosecond epoch timestamp.
+    pub fn get_timestamp(&self) -> u64 {
         self.timestamp
     }
 
-    fn get_ask_trade_info(&self) -> &TradeInfo {
+    /// Returns a reference to the buy-side trade info.
+    pub fn get_bid_trade_info(&self) -> &TradeInfo {
+        &self.bid_trade
+    }
+
+    /// Returns a reference to the sell-side trade info.
+    pub fn get_ask_trade_info(&self) -> &TradeInfo {
         &self.ask_trade
     }
 
-    fn get_bid_trade_info(&self) -> &TradeInfo {
-        &self.bid_trade
-    }
-}
-
-impl SetTrade for Trade {
-    fn set_trade_id(&mut self, id: TradeId) {
+    /// Overwrites the trade ID. Called by the engine to stamp the real snowflake ID.
+    pub fn set_trade_id(&mut self, id: TradeId) {
         self.trade_id = id;
     }
 
-    fn set_timestamp(&mut self, ts: u64) {
+    /// Overwrites the timestamp. Called by the engine to stamp the real fill time.
+    pub fn set_timestamp(&mut self, ts: u64) {
         self.timestamp = ts;
     }
 }
-
-pub type Trades = VecDeque<Trade>;

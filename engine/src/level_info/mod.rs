@@ -56,26 +56,19 @@ impl OrderBookLevelInfo {
     ///
     /// # Arguments
     ///
-    /// * `bids_` — Bid price levels (ascending by price)
-    /// * `asks_` — Ask price levels (ascending by price)
+    /// * `bids` — Bid price levels (ascending by price)
+    /// * `asks` — Ask price levels (ascending by price)
     pub fn new(bids: LevelInfos, asks: LevelInfos) -> Self {
         OrderBookLevelInfo { bids, asks }
     }
-}
 
-pub trait GetOrderBookLevelInfos {
-    /// Returns the bid levels reference (ascending by price; best bid is last).
-    fn get_bids(&self) -> &LevelInfos;
-    /// Returns the ask levels reference (ascending by price; best ask is first).
-    fn get_asks(&self) -> &LevelInfos;
-}
-
-impl GetOrderBookLevelInfos for OrderBookLevelInfo {
-    fn get_asks(&self) -> &LevelInfos {
-        return &self.asks;
+    /// Returns a reference to the bid levels (ascending by price; best bid is last).
+    pub fn get_bids(&self) -> &LevelInfos {
+        &self.bids
     }
 
-    fn get_bids(&self) -> &LevelInfos {
-        return &self.bids;
+    /// Returns a reference to the ask levels (ascending by price; best ask is first).
+    pub fn get_asks(&self) -> &LevelInfos {
+        &self.asks
     }
 }
