@@ -101,7 +101,6 @@ impl SnowFlakeGenerator {
             "datacenter_id must be between 0 - {}",
             MAX_DATACENTER_ID
         );
-        // TODO: tracing add debug log
         SnowFlakeGenerator {
             machine_id,
             datacenter_id,

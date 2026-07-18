@@ -5,6 +5,11 @@
 //! for the sell side. The engine stamps the trade with a snowflake ID and timestamp
 //! after the orderbook produces it.
 
+use std::{
+    collections::VecDeque,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use serde::{Deserialize, Serialize};
 
 use crate::types::{OrderId, Price, Quantity, TradeId, UserId};
@@ -112,13 +117,16 @@ impl Trade {
     /// * `ask_trade` — Trade info for the sell side
     pub fn new(
         trade_id: TradeId,
-        timestamp: u64,
         bid_trade: TradeInfo,
         ask_trade: TradeInfo,
     ) -> Self {
+        let ts: u64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
         Trade {
             trade_id,
-            timestamp,
+            timestamp: ts,
             bid_trade,
             ask_trade,
         }
@@ -154,3 +162,5 @@ impl Trade {
         self.timestamp = ts;
     }
 }
+
+pub type Trades = VecDeque<Trade>;
