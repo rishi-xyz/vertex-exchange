@@ -102,110 +102,139 @@ impl OrderBook {
     /// Walks both sides from best price inward, filling at each level.
     /// Returns all trades produced. Only called for GTC orders — FAK/FOK orders
     /// use [`match_against_opposite`](Self::match_against_opposite) instead.
+    ///
+    /// Self-trade prevention: if all resting orders at a price level belong to
+    /// the same user as the aggressor, that level is temporarily removed from the
+    /// map and re-inserted after matching completes. This avoids both self-matches
+    /// and infinite loops that would occur if the level were left in place.
     fn match_order(&mut self, aggressor_side: Side, generator: &mut SnowFlakeGenerator) -> Trades {
-        // create a trades
         let mut trades: Trades = Trades::new();
-        // reserve atleast half of orders available
         trades.reserve(self.orders_map.len() / 2);
-        // blocking for only single user trades on both side
-        let mut self_trade_block: bool = false;
-        // infinite matching loop
+        // Levels where all resting orders are self-trades, removed temporarily
+        let mut self_trade_levels: Vec<(Price, OrderPointers)> = Vec::new();
+
         loop {
-            // if bids or asks are empty nothing to match break the loop
             if self.bids_map.is_empty() || self.asks_map.is_empty() {
                 break;
             }
-            // since both aren't empty get the best price ,
-            // for bids -> last -> highest buyer are willing to pay,
-            // for asks -> first -> lowest a seller is willing to accept
-            let bid_price: Price = *self.bids_map.last_key_value().unwrap().0; //best bid price is the last one
-            let ask_price: Price = *self.asks_map.first_key_value().unwrap().0; //best ask price is first one
-            // highest bid buyer wants is smaller than ask price of sellers , then it can't be matched
+
+            let bid_price: Price = *self.bids_map.last_key_value().unwrap().0;
+            let ask_price: Price = *self.asks_map.first_key_value().unwrap().0;
+
             if bid_price < ask_price {
                 break;
             }
-            // get full bids and asks orders
-            let bids: &mut VecDeque<Order> = self.bids_map.get_mut(&bid_price).unwrap();
-            let asks: &mut VecDeque<Order> = self.asks_map.get_mut(&ask_price).unwrap();
 
-            // get there len if that if we are repeating the len we can skip
-            let initial_bids_len = bids.len();
-            let initial_asks_len = asks.len();
-            let mut skipped = 0;
+            // Scope borrows so we can remove levels from the map after matching
+            let all_self_trade = {
+                let bids: &mut VecDeque<Order> = self.bids_map.get_mut(&bid_price).unwrap();
+                let asks: &mut VecDeque<Order> = self.asks_map.get_mut(&ask_price).unwrap();
 
-            // while there is bids and asks
-            while bids.len() != 0 && asks.len() != 0 {
-                // time based priority start matching from the first orders in vecqueue
-                let bid = bids.front_mut().unwrap();
-                let ask = asks.front_mut().unwrap();
-                // if bid and ask belong to same user then skip it
-                // id only same users bids and asks are left break
-                if bid.get_user_id() == ask.get_user_id() {
-                    match aggressor_side {
-                        Side::Buy => {
-                            let resting_order = asks.pop_front().unwrap();
-                            asks.push_back(resting_order);
-                            skipped += 1;
-                            if skipped >= initial_asks_len {
-                                self_trade_block = true;
-                                break;
+                let initial_bids_len = bids.len();
+                let initial_asks_len = asks.len();
+                let mut skipped = 0;
+                let mut all_self_trade = false;
+
+                while bids.len() != 0 && asks.len() != 0 {
+                    let bid = bids.front_mut().unwrap();
+                    let ask = asks.front_mut().unwrap();
+
+                    // Self-trade: rotate the resting order to the back and skip
+                    if bid.get_user_id() == ask.get_user_id() {
+                        match aggressor_side {
+                            Side::Buy => {
+                                let resting_order = asks.pop_front().unwrap();
+                                asks.push_back(resting_order);
+                                skipped += 1;
+                                if skipped >= initial_asks_len {
+                                    all_self_trade = true;
+                                    break;
+                                }
+                            }
+                            Side::Sell => {
+                                let resting_order = bids.pop_front().unwrap();
+                                bids.push_back(resting_order);
+                                skipped += 1;
+                                if skipped >= initial_bids_len {
+                                    all_self_trade = true;
+                                    break;
+                                }
                             }
                         }
-                        Side::Sell => {
-                            let resting_order = bids.pop_front().unwrap();
-                            bids.push_back(resting_order);
-                            skipped += 1;
-                            if skipped >= initial_bids_len {
-                                self_trade_block = true;
-                                break;
-                            }
+                        continue;
+                    }
+
+                    let quantity: Quantity =
+                        min(bid.get_remaining_quantity(), ask.get_remaining_quantity());
+                    let _ = bid.fills(quantity);
+                    let _ = ask.fills(quantity);
+
+                    let bid_id: OrderId = bid.get_order_id();
+                    let ask_id: OrderId = ask.get_order_id();
+                    let matched_bid_price: Price = bid.get_price();
+                    let matched_ask_price: Price = ask.get_price();
+                    let bid_user_id: UserId = bid.get_user_id();
+                    let ask_user_id: UserId = ask.get_user_id();
+
+                    if bid.is_filled() {
+                        bids.pop_front();
+                        self.orders_map.remove(&bid_id);
+                    }
+                    if ask.is_filled() {
+                        asks.pop_front();
+                        self.orders_map.remove(&ask_id);
+                    }
+
+                    let trade_id = generator.next_id();
+                    trades.push_back(Trade::new(
+                        trade_id,
+                        TradeInfo::new(bid_id, matched_bid_price, quantity, bid_user_id),
+                        TradeInfo::new(ask_id, matched_ask_price, quantity, ask_user_id),
+                    ));
+                }
+
+                all_self_trade
+            }; // borrows of bids/asks end here
+
+            // All orders at this level are self-trades — remove temporarily
+            // so the outer loop advances to the next price level
+            if all_self_trade {
+                match aggressor_side {
+                    Side::Buy => {
+                        if let Some(orders) = self.asks_map.remove(&ask_price) {
+                            self_trade_levels.push((ask_price, orders));
                         }
                     }
-                    continue;
+                    Side::Sell => {
+                        if let Some(orders) = self.bids_map.remove(&bid_price) {
+                            self_trade_levels.push((bid_price, orders));
+                        }
+                    }
                 }
-                // get min qunatity of both to fill
-                let quantity: Quantity =
-                    min(bid.get_remaining_quantity(), ask.get_remaining_quantity());
-                // fill the ask and bid with the quantity
-                let _ = bid.fills(quantity);
-                let _ = ask.fills(quantity);
-
-                let bid_id: OrderId = bid.get_order_id();
-                let ask_id: OrderId = ask.get_order_id();
-                let matched_bid_price: Price = bid.get_price();
-                let matched_ask_price: Price = ask.get_price();
-                let bid_user_id: UserId = bid.get_user_id();
-                let ask_user_id: UserId = ask.get_user_id();
-
-                // remove filled orders
-                if bid.is_filled() {
-                    bids.pop_front();
-                    self.orders_map.remove(&bid_id);
-                }
-                if ask.is_filled() {
-                    asks.pop_front();
-                    self.orders_map.remove(&ask_id);
-                }
-                //add to trades
-                let trade_id = generator.next_id();
-                trades.push_back(Trade::new(
-                    trade_id,
-                    TradeInfo::new(bid_id, matched_bid_price, quantity, bid_user_id),
-                    TradeInfo::new(ask_id, matched_ask_price, quantity, ask_user_id),
-                ));
+                continue;
             }
-            // if whole bids and asks are empty remove it
-            if bids.is_empty() {
+
+            // Remove empty price levels
+            if self.bids_map.get(&bid_price).map_or(false, |q| q.is_empty()) {
                 self.bids_map.remove(&bid_price);
             }
-            if asks.is_empty() {
+            if self.asks_map.get(&ask_price).map_or(false, |q| q.is_empty()) {
                 self.asks_map.remove(&ask_price);
             }
-            // only self trades are there so break
-            if self_trade_block {
-                break;
+        }
+
+        // Re-insert self-trade levels — their orders are still resting in the book
+        for (price, orders) in self_trade_levels {
+            match aggressor_side {
+                Side::Buy => {
+                    self.asks_map.insert(price, orders);
+                }
+                Side::Sell => {
+                    self.bids_map.insert(price, orders);
+                }
             }
         }
+
         trades
     }
 
@@ -268,6 +297,8 @@ impl OrderBook {
         // matching loop — shared by FAK and FOK
         let mut trades: Trades = Trades::new();
         let mut remaining_qty: Quantity = required_qty;
+        // Levels where all resting orders are self-trades, removed temporarily
+        let mut self_trade_levels: Vec<(Price, OrderPointers)> = Vec::new();
 
         loop {
             if remaining_qty == 0 {
@@ -302,7 +333,7 @@ impl OrderBook {
             }
 
             // match at this price level, scoped so resting_orders borrow ends before remove
-            let level_empty = {
+            let (level_empty, all_self_trade) = {
                 let resting_orders: &mut VecDeque<Order> = match order_side {
                     Side::Buy => self.asks_map.get_mut(&resting_price).unwrap(),
                     Side::Sell => self.bids_map.get_mut(&resting_price).unwrap(),
@@ -310,6 +341,7 @@ impl OrderBook {
 
                 let initial_len = resting_orders.len();
                 let mut skipped = 0;
+                let mut all_self_trade = false;
 
                 while remaining_qty > 0 && !resting_orders.is_empty() {
                     let resting_order = resting_orders.front_mut().unwrap();
@@ -320,6 +352,7 @@ impl OrderBook {
                         resting_orders.push_back(skipped_order);
                         skipped += 1;
                         if skipped >= initial_len {
+                            all_self_trade = true;
                             break;
                         }
                         continue;
@@ -363,8 +396,26 @@ impl OrderBook {
                     trades.push_back(Trade::new(trade_id, bid_info, ask_info));
                 }
 
-                resting_orders.is_empty()
-            };
+                (resting_orders.is_empty(), all_self_trade)
+            }; // borrow of resting_orders ends here
+
+            // All orders at this level are self-trades — remove temporarily
+            // so the outer loop advances to the next price level
+            if all_self_trade {
+                match order_side {
+                    Side::Buy => {
+                        if let Some(orders) = self.asks_map.remove(&resting_price) {
+                            self_trade_levels.push((resting_price, orders));
+                        }
+                    }
+                    Side::Sell => {
+                        if let Some(orders) = self.bids_map.remove(&resting_price) {
+                            self_trade_levels.push((resting_price, orders));
+                        }
+                    }
+                }
+                continue;
+            }
 
             // remove empty price level (safe: resting_orders borrow has ended)
             if level_empty {
@@ -376,6 +427,18 @@ impl OrderBook {
                         self.bids_map.remove(&resting_price);
                     }
                 };
+            }
+        }
+
+        // Re-insert self-trade levels — their orders are still resting in the book
+        for (price, orders) in self_trade_levels {
+            match order_side {
+                Side::Buy => {
+                    self.asks_map.insert(price, orders);
+                }
+                Side::Sell => {
+                    self.bids_map.insert(price, orders);
+                }
             }
         }
 
