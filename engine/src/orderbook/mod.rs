@@ -100,8 +100,8 @@ impl OrderBook {
     /// Matches resting GTC orders against each other after a new GTC order enters the book.
     ///
     /// Walks both sides from best price inward, filling at each level.
-    /// Returns all trades produced. Only called for GTC orders — FAK orders
-    /// use [`match_fak_order`](Self::match_fak_order) instead and never enter the book.
+    /// Returns all trades produced. Only called for GTC orders — FAK/FOK orders
+    /// use [`match_against_opposite`](Self::match_against_opposite) instead.
     fn match_order(&mut self, aggressor_side: Side) -> Trades {
         // create a trades
         let mut trades: Trades = Trades::new();
@@ -209,174 +209,66 @@ impl OrderBook {
         trades
     }
 
-    fn match_fok_order(&mut self, order: &Order) -> Option<Trades> {
-        let mut trades: Trades = Trades::new();
-        let order_side = order.get_side();
-        let order_id = order.get_order_id();
-        let order_price = order.get_price();
-        let order_user_id = order.get_user_id();
-        let required_quantity = order.get_remaining_quantity();
-        // pre check available
-        let mut available: Quantity = 0;
-        // walk oppo order side
-        // skip orders from same user
-        // sum remaining quantity of each order
-        match order_side {
-            Side::Buy => {
-                for (price, orders) in self.asks_map.iter() {
-                    if order_price < *price {
-                        break;
-                    }
-                    for o in orders.iter() {
-                        if o.get_user_id() != order_user_id {
-                            available += o.get_remaining_quantity();
-                        }
-                    }
-                }
-            }
-            Side::Sell => {
-                for (price, orders) in self.asks_map.iter() {
-                    if order_price < *price {
-                        break;
-                    }
-                    for o in orders.iter() {
-                        if o.get_user_id() != order_user_id {
-                            available += o.get_remaining_quantity();
-                        }
-                    }
-                }
-            }
-        }
-        if available < required_quantity {
-            return None;
-        }
-        // match same as fak -> qurantteded to fill
-        let mut trades: Trades = Trades::new();
-        let mut remaining_qty: Quantity = required_quantity;
+    /// Matches a non-resting aggressor order against resting orders on the opposite side.
+    ///
+    /// The aggressor is **never inserted into the book**. Walks the opposite side
+    /// from the best price inward, filling at each level. Self-trade prevention
+    /// skips resting orders from the same user.
+    ///
+    /// When `require_full_fill` is `true` (FOK), a pre-check verifies that enough
+    /// liquidity exists before any mutations. Returns `None` if the full quantity
+    /// cannot be filled. When `false` (FAK), partial fills are accepted and any
+    /// unfilled remainder is discarded.
+    fn match_against_opposite(
+        &mut self,
+        aggressor: &Order,
+        require_full_fill: bool,
+    ) -> Option<Trades> {
+        let order_side = aggressor.get_side();
+        let order_id = aggressor.get_order_id();
+        let order_price = aggressor.get_price();
+        let order_user_id = aggressor.get_user_id();
+        let required_qty: Quantity = aggressor.get_remaining_quantity();
 
-        loop {
-            if remaining_qty == 0 {
-                break;
-            }
-
-            let resting_price: Price = match order_side {
+        // FOK pre-check: sum available liquidity (read-only) before mutating
+        if require_full_fill {
+            let mut available: Quantity = 0;
+            match order_side {
                 Side::Buy => {
-                    if let Some((&price, _)) = self.asks_map.first_key_value() {
-                        price
-                    } else {
-                        break;
+                    for (price, orders) in self.asks_map.iter() {
+                        if order_price < *price {
+                            break;
+                        }
+                        for o in orders.iter() {
+                            if o.get_user_id() != order_user_id {
+                                available += o.get_remaining_quantity();
+                            }
+                        }
                     }
                 }
                 Side::Sell => {
-                    if let Some((&price, _)) = self.bids_map.last_key_value() {
-                        price
-                    } else {
-                        break;
-                    }
-                }
-            };
-
-            let crosses = match order_side {
-                Side::Buy => order_price >= resting_price,
-                Side::Sell => order_price <= resting_price,
-            };
-            if !crosses {
-                break;
-            }
-
-            let level_empty = {
-                let resting_orders = match order_side {
-                    Side::Buy => self.asks_map.get_mut(&resting_price).unwrap(),
-                    Side::Sell => self.bids_map.get_mut(&resting_price).unwrap(),
-                };
-
-                let initial_len = resting_orders.len();
-                let mut skipped = 0;
-
-                while remaining_qty > 0 && !resting_orders.is_empty() {
-                    let resting_order = resting_orders.front_mut().unwrap();
-
-                    if resting_order.get_user_id() == order_user_id {
-                        let skipped_order = resting_orders.pop_front().unwrap();
-                        resting_orders.push_back(skipped_order);
-                        skipped += 1;
-                        if skipped >= initial_len {
+                    for (price, orders) in self.bids_map.iter().rev() {
+                        if order_price > *price {
                             break;
                         }
-                        continue;
+                        for o in orders.iter() {
+                            if o.get_user_id() != order_user_id {
+                                available += o.get_remaining_quantity();
+                            }
+                        }
                     }
-
-                    let fill_qty = min(remaining_qty, resting_order.get_remaining_quantity());
-                    remaining_qty -= fill_qty;
-                    let _ = resting_order.fills(fill_qty);
-
-                    let resting_id = resting_order.get_order_id();
-                    let resting_price_val = resting_order.get_price();
-                    let resting_user_id = resting_order.get_user_id();
-
-                    if resting_order.is_filled() {
-                        resting_orders.pop_front();
-                        self.orders_map.remove(&resting_id);
-                    }
-
-                    let trade_id = SnowFlakeGenerator::new(0, 0).next_id();
-                    let (bid_info, ask_info) = match order_side {
-                        Side::Buy => (
-                            TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
-                            TradeInfo::new(
-                                resting_id,
-                                resting_price_val,
-                                fill_qty,
-                                resting_user_id,
-                            ),
-                        ),
-                        Side::Sell => (
-                            TradeInfo::new(
-                                resting_id,
-                                resting_price_val,
-                                fill_qty,
-                                resting_user_id,
-                            ),
-                            TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
-                        ),
-                    };
-                    trades.push_back(Trade::new(trade_id, bid_info, ask_info));
                 }
-
-                resting_orders.is_empty()
-            };
-
-            if level_empty {
-                match order_side {
-                    Side::Buy => {
-                        self.asks_map.remove(&resting_price);
-                    }
-                    Side::Sell => {
-                        self.bids_map.remove(&resting_price);
-                    }
-                };
+            }
+            if available < required_qty {
+                return None;
             }
         }
-        Some(trades)
-    }
 
-    /// Matches a Fill-and-Kill aggressor order against resting orders on the opposite side.
-    ///
-    /// The FAK order is **never inserted into the book**. It walks the opposite side
-    /// from the best price inward, filling as much as possible. Any unfilled remainder
-    /// is discarded (killed). Self-trade prevention skips resting orders from the same user.
-    fn match_fak_order(&mut self, order: &Order) -> Trades {
+        // matching loop — shared by FAK and FOK
         let mut trades: Trades = Trades::new();
-        // get remaining quantity ,side , order_id , price , user_id
-        let mut remaining_qty: Quantity = order.get_remaining_quantity();
-        let order_side = order.get_side();
-        let order_id = order.get_order_id();
-        let order_price = order.get_price();
-        let order_user_id = order.get_user_id();
+        let mut remaining_qty: Quantity = required_qty;
 
-        // infinite matching loop
         loop {
-            // if remaining quantity is 0 break
             if remaining_qty == 0 {
                 break;
             }
@@ -486,7 +378,12 @@ impl OrderBook {
             }
         }
 
-        trades
+        // FOK safety net: if somehow not fully filled, reject
+        if require_full_fill && remaining_qty > 0 {
+            return None;
+        }
+
+        Some(trades)
     }
 
     /// Cancels a resting order by ID.
@@ -520,8 +417,8 @@ impl OrderBook {
     /// This is the main entry point for order placement. The flow:
     ///
     /// 1. Reject duplicate order IDs
-    /// 2. **FAK orders**: reject if no crossing liquidity, then match against
-    ///    resting orders without entering the book. Unfilled remainder is discarded.
+    /// 2. **FAK / FOK orders**: match against resting orders without entering the book.
+    ///    FAK accepts partial fills (remainder discarded). FOK requires full fill or rejects.
     /// 3. **GTC / other orders**: insert into the book, then match via [`match_order`].
     pub fn add_order(&mut self, order: &Order) -> Option<Trades> {
         let order_side = order.get_side();
@@ -537,7 +434,15 @@ impl OrderBook {
             if !self.can_match(order_side, order_price) {
                 return None;
             }
-            return Some(self.match_fak_order(order));
+            return self.match_against_opposite(order, false);
+        }
+
+        // FOK: never enter the book — must fill entirely or reject
+        if order.get_type() == OrderType::FillOrKill {
+            if !self.can_match(order_side, order_price) {
+                return None;
+            }
+            return self.match_against_opposite(order, true);
         }
 
         // GTC and other resting order types: insert into book, then match
