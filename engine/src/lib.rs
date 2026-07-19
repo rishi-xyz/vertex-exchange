@@ -4,5 +4,6 @@ mod order_modify;
 mod orderbook;
 mod snowflake_id;
 mod trade;
+mod trading_pair;
 mod types;
 mod user;
