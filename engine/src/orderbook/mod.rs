@@ -102,7 +102,7 @@ impl OrderBook {
     /// Walks both sides from best price inward, filling at each level.
     /// Returns all trades produced. Only called for GTC orders — FAK/FOK orders
     /// use [`match_against_opposite`](Self::match_against_opposite) instead.
-    fn match_order(&mut self, aggressor_side: Side) -> Trades {
+    fn match_order(&mut self, aggressor_side: Side, generator: &mut SnowFlakeGenerator) -> Trades {
         // create a trades
         let mut trades: Trades = Trades::new();
         // reserve atleast half of orders available
@@ -187,7 +187,7 @@ impl OrderBook {
                     self.orders_map.remove(&ask_id);
                 }
                 //add to trades
-                let trade_id = SnowFlakeGenerator::new(0, 0).next_id();
+                let trade_id = generator.next_id();
                 trades.push_back(Trade::new(
                     trade_id,
                     TradeInfo::new(bid_id, matched_bid_price, quantity, bid_user_id),
@@ -223,6 +223,7 @@ impl OrderBook {
         &mut self,
         aggressor: &Order,
         require_full_fill: bool,
+        generator: &mut SnowFlakeGenerator,
     ) -> Option<Trades> {
         let order_side = aggressor.get_side();
         let order_id = aggressor.get_order_id();
@@ -338,7 +339,7 @@ impl OrderBook {
                     }
 
                     // create trade with correct bid/ask sides
-                    let trade_id = SnowFlakeGenerator::new(0, 0).next_id();
+                    let trade_id = generator.next_id();
                     let (bid_info, ask_info) = match order_side {
                         Side::Buy => (
                             TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
@@ -420,7 +421,7 @@ impl OrderBook {
     /// 2. **FAK / FOK orders**: match against resting orders without entering the book.
     ///    FAK accepts partial fills (remainder discarded). FOK requires full fill or rejects.
     /// 3. **GTC / other orders**: insert into the book, then match via [`match_order`].
-    pub fn add_order(&mut self, order: &Order) -> Option<Trades> {
+    pub fn add_order(&mut self, order: &Order, generator: &mut SnowFlakeGenerator) -> Option<Trades> {
         let order_side = order.get_side();
         let order_id = order.get_order_id();
         let order_price = order.get_price();
@@ -434,7 +435,7 @@ impl OrderBook {
             if !self.can_match(order_side, order_price) {
                 return None;
             }
-            return self.match_against_opposite(order, false);
+            return self.match_against_opposite(order, false, generator);
         }
 
         // FOK: never enter the book — must fill entirely or reject
@@ -442,7 +443,7 @@ impl OrderBook {
             if !self.can_match(order_side, order_price) {
                 return None;
             }
-            return self.match_against_opposite(order, true);
+            return self.match_against_opposite(order, true, generator);
         }
 
         // GTC and other resting order types: insert into book, then match
@@ -452,14 +453,14 @@ impl OrderBook {
             Side::Sell => self.asks_map.entry(order_price).or_default(),
         };
         level.push_back(*order);
-        Some(self.match_order(order_side))
+        Some(self.match_order(order_side, generator))
     }
 
     /// Modifies an existing order by cancel-replace.
     ///
     /// Cancels the old order and creates a new one with the parameters from
     /// `order_modify`. The new order then goes through the full matching flow.
-    pub fn modify_order(&mut self, order_modify: OrderModify) -> Option<Trades> {
+    pub fn modify_order(&mut self, order_modify: OrderModify, generator: &mut SnowFlakeGenerator) -> Option<Trades> {
         let order_id = order_modify.get_order_id();
         // if order doesn't exits return
         if !self.orders_map.contains_key(&order_id) {
@@ -479,7 +480,7 @@ impl OrderBook {
             order_modify.get_user_id(),
         );
         let _ = self.cancel_order(&order_id);
-        self.add_order(&new_order)
+        self.add_order(&new_order, generator)
     }
 
     /// Returns the total number of resting orders in the book.

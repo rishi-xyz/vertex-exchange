@@ -1,10 +1,11 @@
-use std::{collections::HashMap, fs::TryLockError::Error};
+use std::collections::HashMap;
 
 use crate::{
     level_info::OrderBookLevelInfo,
-    order::{self, Order},
+    order::Order,
     order_modify::OrderModify,
     orderbook::OrderBook,
+    snowflake_id::SnowFlakeGenerator,
     trade::Trades,
     trading_pair::TradingPair,
     types::OrderId,
@@ -12,13 +13,14 @@ use crate::{
 
 pub struct Engine {
     orderbooks: HashMap<TradingPair, OrderBook>,
+    generator: SnowFlakeGenerator,
 }
 
 impl Engine {
-    pub fn new() -> Self {
-        let order_book: HashMap<TradingPair, OrderBook> = HashMap::new();
+    pub fn new(machine_id: u64, datacenter_id: u64) -> Self {
         Engine {
-            orderbooks: order_book,
+            orderbooks: HashMap::new(),
+            generator: SnowFlakeGenerator::new(machine_id, datacenter_id),
         }
     }
     // create orderbook
@@ -31,7 +33,7 @@ impl Engine {
     }
 
     pub fn add_order(&mut self, pair: &TradingPair, order: &Order) -> Option<Trades> {
-        self.orderbooks.get_mut(pair)?.add_order(order)
+        self.orderbooks.get_mut(pair)?.add_order(order, &mut self.generator)
     }
 
     pub fn cancel_order(&mut self, pair: &TradingPair, order_id: &OrderId) -> bool {
@@ -47,7 +49,7 @@ impl Engine {
         pair: &TradingPair,
         modify_order: OrderModify,
     ) -> Option<Trades> {
-        self.orderbooks.get_mut(pair)?.modify_order(modify_order)
+        self.orderbooks.get_mut(pair)?.modify_order(modify_order, &mut self.generator)
     }
 
     pub fn get_order_info(&self, pair: &TradingPair) -> Option<OrderBookLevelInfo> {

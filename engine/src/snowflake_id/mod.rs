@@ -156,7 +156,7 @@ impl SnowFlakeGenerator {
     pub fn next_id(&mut self) -> u64 {
         let mut timestamp = Self::current_millis();
         assert!(
-            timestamp < self.last_timestamp,
+            timestamp >= self.last_timestamp,
             "Clock moved backwards. Refusing to generate id for {} milliseconds",
             self.last_timestamp - timestamp
         );
