@@ -209,6 +209,157 @@ impl OrderBook {
         trades
     }
 
+    fn match_fok_order(&mut self, order: &Order) -> Option<Trades> {
+        let mut trades: Trades = Trades::new();
+        let order_side = order.get_side();
+        let order_id = order.get_order_id();
+        let order_price = order.get_price();
+        let order_user_id = order.get_user_id();
+        let required_quantity = order.get_remaining_quantity();
+        // pre check available
+        let mut available: Quantity = 0;
+        // walk oppo order side
+        // skip orders from same user
+        // sum remaining quantity of each order
+        match order_side {
+            Side::Buy => {
+                for (price, orders) in self.asks_map.iter() {
+                    if order_price < *price {
+                        break;
+                    }
+                    for o in orders.iter() {
+                        if o.get_user_id() != order_user_id {
+                            available += o.get_remaining_quantity();
+                        }
+                    }
+                }
+            }
+            Side::Sell => {
+                for (price, orders) in self.asks_map.iter() {
+                    if order_price < *price {
+                        break;
+                    }
+                    for o in orders.iter() {
+                        if o.get_user_id() != order_user_id {
+                            available += o.get_remaining_quantity();
+                        }
+                    }
+                }
+            }
+        }
+        if available < required_quantity {
+            return None;
+        }
+        // match same as fak -> qurantteded to fill
+        let mut trades: Trades = Trades::new();
+        let mut remaining_qty: Quantity = required_quantity;
+
+        loop {
+            if remaining_qty == 0 {
+                break;
+            }
+
+            let resting_price: Price = match order_side {
+                Side::Buy => {
+                    if let Some((&price, _)) = self.asks_map.first_key_value() {
+                        price
+                    } else {
+                        break;
+                    }
+                }
+                Side::Sell => {
+                    if let Some((&price, _)) = self.bids_map.last_key_value() {
+                        price
+                    } else {
+                        break;
+                    }
+                }
+            };
+
+            let crosses = match order_side {
+                Side::Buy => order_price >= resting_price,
+                Side::Sell => order_price <= resting_price,
+            };
+            if !crosses {
+                break;
+            }
+
+            let level_empty = {
+                let resting_orders = match order_side {
+                    Side::Buy => self.asks_map.get_mut(&resting_price).unwrap(),
+                    Side::Sell => self.bids_map.get_mut(&resting_price).unwrap(),
+                };
+
+                let initial_len = resting_orders.len();
+                let mut skipped = 0;
+
+                while remaining_qty > 0 && !resting_orders.is_empty() {
+                    let resting_order = resting_orders.front_mut().unwrap();
+
+                    if resting_order.get_user_id() == order_user_id {
+                        let skipped_order = resting_orders.pop_front().unwrap();
+                        resting_orders.push_back(skipped_order);
+                        skipped += 1;
+                        if skipped >= initial_len {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    let fill_qty = min(remaining_qty, resting_order.get_remaining_quantity());
+                    remaining_qty -= fill_qty;
+                    let _ = resting_order.fills(fill_qty);
+
+                    let resting_id = resting_order.get_order_id();
+                    let resting_price_val = resting_order.get_price();
+                    let resting_user_id = resting_order.get_user_id();
+
+                    if resting_order.is_filled() {
+                        resting_orders.pop_front();
+                        self.orders_map.remove(&resting_id);
+                    }
+
+                    let trade_id = SnowFlakeGenerator::new(0, 0).next_id();
+                    let (bid_info, ask_info) = match order_side {
+                        Side::Buy => (
+                            TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
+                            TradeInfo::new(
+                                resting_id,
+                                resting_price_val,
+                                fill_qty,
+                                resting_user_id,
+                            ),
+                        ),
+                        Side::Sell => (
+                            TradeInfo::new(
+                                resting_id,
+                                resting_price_val,
+                                fill_qty,
+                                resting_user_id,
+                            ),
+                            TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
+                        ),
+                    };
+                    trades.push_back(Trade::new(trade_id, bid_info, ask_info));
+                }
+
+                resting_orders.is_empty()
+            };
+
+            if level_empty {
+                match order_side {
+                    Side::Buy => {
+                        self.asks_map.remove(&resting_price);
+                    }
+                    Side::Sell => {
+                        self.bids_map.remove(&resting_price);
+                    }
+                };
+            }
+        }
+        Some(trades)
+    }
+
     /// Matches a Fill-and-Kill aggressor order against resting orders on the opposite side.
     ///
     /// The FAK order is **never inserted into the book**. It walks the opposite side
@@ -299,10 +450,20 @@ impl OrderBook {
                     let (bid_info, ask_info) = match order_side {
                         Side::Buy => (
                             TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
-                            TradeInfo::new(resting_id, resting_price_val, fill_qty, resting_user_id),
+                            TradeInfo::new(
+                                resting_id,
+                                resting_price_val,
+                                fill_qty,
+                                resting_user_id,
+                            ),
                         ),
                         Side::Sell => (
-                            TradeInfo::new(resting_id, resting_price_val, fill_qty, resting_user_id),
+                            TradeInfo::new(
+                                resting_id,
+                                resting_price_val,
+                                fill_qty,
+                                resting_user_id,
+                            ),
                             TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
                         ),
                     };
