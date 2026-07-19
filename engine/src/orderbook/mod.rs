@@ -390,7 +390,7 @@ impl OrderBook {
     ///
     /// Removes the order from both the price-level deque and the `orders_map`.
     /// Returns the cancelled order, or `None` if not found.
-    fn cancel_order(&mut self, order_id: &OrderId) -> Option<Order> {
+    pub fn cancel_order(&mut self, order_id: &OrderId) -> Option<Order> {
         let order: Order = self.orders_map.remove(order_id)?;
         let price: Price = order.get_price();
         let side: Side = order.get_side();
