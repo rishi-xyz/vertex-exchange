@@ -215,10 +215,18 @@ impl OrderBook {
             }
 
             // Remove empty price levels
-            if self.bids_map.get(&bid_price).map_or(false, |q| q.is_empty()) {
+            if self
+                .bids_map
+                .get(&bid_price)
+                .map_or(false, |q| q.is_empty())
+            {
                 self.bids_map.remove(&bid_price);
             }
-            if self.asks_map.get(&ask_price).map_or(false, |q| q.is_empty()) {
+            if self
+                .asks_map
+                .get(&ask_price)
+                .map_or(false, |q| q.is_empty())
+            {
                 self.asks_map.remove(&ask_price);
             }
         }
@@ -484,7 +492,11 @@ impl OrderBook {
     /// 2. **FAK / FOK orders**: match against resting orders without entering the book.
     ///    FAK accepts partial fills (remainder discarded). FOK requires full fill or rejects.
     /// 3. **GTC / other orders**: insert into the book, then match via [`match_order`].
-    pub fn add_order(&mut self, order: &Order, generator: &mut SnowFlakeGenerator) -> Option<Trades> {
+    pub fn add_order(
+        &mut self,
+        order: &Order,
+        generator: &mut SnowFlakeGenerator,
+    ) -> Option<Trades> {
         let order_side = order.get_side();
         let order_id = order.get_order_id();
         let order_price = order.get_price();
@@ -523,7 +535,11 @@ impl OrderBook {
     ///
     /// Cancels the old order and creates a new one with the parameters from
     /// `order_modify`. The new order then goes through the full matching flow.
-    pub fn modify_order(&mut self, order_modify: OrderModify, generator: &mut SnowFlakeGenerator) -> Option<Trades> {
+    pub fn modify_order(
+        &mut self,
+        order_modify: OrderModify,
+        generator: &mut SnowFlakeGenerator,
+    ) -> Option<Trades> {
         let order_id = order_modify.get_order_id();
         // if order doesn't exits return
         if !self.orders_map.contains_key(&order_id) {

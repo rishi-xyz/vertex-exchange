@@ -1,14 +1,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    level_info::OrderBookLevelInfo,
-    order::Order,
-    order_modify::OrderModify,
-    orderbook::OrderBook,
-    snowflake_id::SnowFlakeGenerator,
-    trade::Trades,
-    trading_pair::TradingPair,
-    types::OrderId,
+    level_info::OrderBookLevelInfo, order::Order, order_modify::OrderModify, orderbook::OrderBook,
+    snowflake_id::SnowFlakeGenerator, trade::Trades, trading_pair::TradingPair, types::OrderId,
 };
 
 pub struct Engine {
@@ -33,7 +27,9 @@ impl Engine {
     }
 
     pub fn add_order(&mut self, pair: &TradingPair, order: &Order) -> Option<Trades> {
-        self.orderbooks.get_mut(pair)?.add_order(order, &mut self.generator)
+        self.orderbooks
+            .get_mut(pair)?
+            .add_order(order, &mut self.generator)
     }
 
     pub fn cancel_order(&mut self, pair: &TradingPair, order_id: &OrderId) -> bool {
@@ -49,7 +45,9 @@ impl Engine {
         pair: &TradingPair,
         modify_order: OrderModify,
     ) -> Option<Trades> {
-        self.orderbooks.get_mut(pair)?.modify_order(modify_order, &mut self.generator)
+        self.orderbooks
+            .get_mut(pair)?
+            .modify_order(modify_order, &mut self.generator)
     }
 
     pub fn get_order_info(&self, pair: &TradingPair) -> Option<OrderBookLevelInfo> {

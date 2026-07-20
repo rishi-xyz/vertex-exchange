@@ -115,11 +115,7 @@ impl Trade {
     /// * `timestamp` — Placeholder (typically `0`). Overwritten by the engine.
     /// * `bid_trade` — Trade info for the buy side
     /// * `ask_trade` — Trade info for the sell side
-    pub fn new(
-        trade_id: TradeId,
-        bid_trade: TradeInfo,
-        ask_trade: TradeInfo,
-    ) -> Self {
+    pub fn new(trade_id: TradeId, bid_trade: TradeInfo, ask_trade: TradeInfo) -> Self {
         let ts: u64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

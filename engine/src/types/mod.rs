@@ -17,10 +17,10 @@ pub type Quantity = u32;
 ///
 /// Uses UUID v4 (random). Generated client-side or by the Go API layer;
 /// the engine does not create user IDs.
-pub type UserId  = Uuid;
+pub type UserId = Uuid;
 
 /// Unique identifier for an order, assigned by the engine via snowflake generation.
-/// 
+///
 /// Will be  SnowFlakeId format using [`SnowFlakeGenerator`](crate::snowflake_id::SnowFlakeGenerator)
 pub type OrderId = u64;
 
@@ -68,7 +68,7 @@ pub enum OrderStatus {
     /// All quantity has been matched (`remaining_quantity == 0`).
     Filled,
     /// Initial state before any matching. Used as a default when constructing
-    /// TODO / DOC: add how we modify order 
+    /// TODO / DOC: add how we modify order
     Empty,
 }
 
@@ -102,4 +102,3 @@ impl fmt::Display for Asset {
         }
     }
 }
-
