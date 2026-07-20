@@ -78,6 +78,11 @@ impl User {
         }
     }
 
+    /// Returns the user's UUID.
+    pub fn get_id(&self) -> UserId {
+        self.id
+    }
+
     /// Credits the user's balance for the given asset.
     ///
     /// Called by [`ExchangeEngine::deposit`](crate::engine::ExchangeEngine::deposit)
@@ -134,7 +139,6 @@ impl User {
         if available < amount {
             return Err("Insufficient balance".into());
         }
-        *self.balances.entry(asset).or_insert(0) -= amount;
         self.locked_orders
             .insert(order_id, LockEntry { asset, amount });
         Ok(())
@@ -153,11 +157,9 @@ impl User {
     ///
     /// Returns `Err("Order not locked")` if the order ID is not found.
     pub fn unlock_order(&mut self, order_id: &OrderId) -> Result<(), String> {
-        let entry = self
-            .locked_orders
+        self.locked_orders
             .remove(order_id)
             .ok_or("Order not Locked")?;
-        *self.balances.entry(entry.asset).or_insert(0) += entry.amount;
         Ok(())
     }
 
