@@ -4,8 +4,8 @@ use vertex_engine::orderbook::OrderBook;
 use vertex_engine::types::{OrderType, Side};
 
 use helpers::{
-    make_generator, make_modify, make_order, make_order_with_id, make_user_id, make_user_id_fixed,
-    UserId,
+    UserId, make_generator, make_modify, make_order, make_order_with_id, make_user_id,
+    make_user_id_fixed,
 };
 
 fn new_book() -> OrderBook {
@@ -983,7 +983,13 @@ fn get_order_info_aggregates_same_price_orders() {
 
     let o1 = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
     let o2 = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 20, uid_b());
-    let o3 = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 30, make_user_id());
+    let o3 = make_order(
+        OrderType::GoodTillCancel,
+        Side::Buy,
+        50000,
+        30,
+        make_user_id(),
+    );
     book.add_order(&o1, &mut generator);
     book.add_order(&o2, &mut generator);
     book.add_order(&o3, &mut generator);
@@ -1000,13 +1006,11 @@ fn duplicate_gtc_buy_id_rejected() {
     let mut book = new_book();
     let mut generator = make_generator();
 
-    let order =
-        make_order_with_id(42, OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
+    let order = make_order_with_id(42, OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
     let result1 = book.add_order(&order, &mut generator);
     assert!(result1.is_some());
 
-    let order2 =
-        make_order_with_id(42, OrderType::GoodTillCancel, Side::Buy, 51000, 5, uid_a());
+    let order2 = make_order_with_id(42, OrderType::GoodTillCancel, Side::Buy, 51000, 5, uid_a());
     let result2 = book.add_order(&order2, &mut generator);
     assert!(result2.is_none());
 }
@@ -1021,26 +1025,12 @@ fn duplicate_fak_id_not_rejected_because_never_rests() {
     book.add_order(&resting, &mut generator);
 
     // First FAK matches 5
-    let fak = make_order_with_id(
-        42,
-        OrderType::FillAndKill,
-        Side::Buy,
-        50000,
-        5,
-        uid_a(),
-    );
+    let fak = make_order_with_id(42, OrderType::FillAndKill, Side::Buy, 50000, 5, uid_a());
     let t1 = book.add_order(&fak, &mut generator).unwrap();
     assert_eq!(t1.len(), 1);
 
     // Second FAK with same ID succeeds because FAK never enters orders_map
-    let fak2 = make_order_with_id(
-        42,
-        OrderType::FillAndKill,
-        Side::Buy,
-        50000,
-        5,
-        uid_a(),
-    );
+    let fak2 = make_order_with_id(42, OrderType::FillAndKill, Side::Buy, 50000, 5, uid_a());
     let t2 = book.add_order(&fak2, &mut generator).unwrap();
     assert_eq!(t2.len(), 1);
 }
@@ -1053,25 +1043,11 @@ fn duplicate_fok_id_not_rejected_because_never_rests() {
     let resting = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 20, uid_b());
     book.add_order(&resting, &mut generator);
 
-    let fok = make_order_with_id(
-        42,
-        OrderType::FillOrKill,
-        Side::Buy,
-        50000,
-        5,
-        uid_a(),
-    );
+    let fok = make_order_with_id(42, OrderType::FillOrKill, Side::Buy, 50000, 5, uid_a());
     let t1 = book.add_order(&fok, &mut generator).unwrap();
     assert_eq!(t1.len(), 1);
 
-    let fok2 = make_order_with_id(
-        42,
-        OrderType::FillOrKill,
-        Side::Buy,
-        50000,
-        5,
-        uid_a(),
-    );
+    let fok2 = make_order_with_id(42, OrderType::FillOrKill, Side::Buy, 50000, 5, uid_a());
     let t2 = book.add_order(&fok2, &mut generator).unwrap();
     assert_eq!(t2.len(), 1);
 }

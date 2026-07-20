@@ -57,7 +57,13 @@ fn remove_nonexistent_returns_none() {
 #[test]
 fn add_order_nonexistent_pair_returns_none() {
     let mut engine = new_engine();
-    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, make_user_id());
+    let order = make_order(
+        OrderType::GoodTillCancel,
+        Side::Buy,
+        50000,
+        10,
+        make_user_id(),
+    );
     let result = engine.add_order(&eth_usdc(), &order);
     assert!(result.is_none());
 }
@@ -67,7 +73,13 @@ fn add_order_existing_pair_delegates() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
 
-    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, make_user_id());
+    let order = make_order(
+        OrderType::GoodTillCancel,
+        Side::Buy,
+        50000,
+        10,
+        make_user_id(),
+    );
     let result = engine.add_order(&eth_usdc(), &order);
     assert!(result.is_some());
     assert_eq!(engine.size(&eth_usdc()), Some(1));
@@ -78,7 +90,13 @@ fn cancel_order_existing_pair_returns_true() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
 
-    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, make_user_id());
+    let order = make_order(
+        OrderType::GoodTillCancel,
+        Side::Buy,
+        50000,
+        10,
+        make_user_id(),
+    );
     engine.add_order(&eth_usdc(), &order);
     let result = engine.cancel_order(&eth_usdc(), &order.get_order_id());
     assert!(result);

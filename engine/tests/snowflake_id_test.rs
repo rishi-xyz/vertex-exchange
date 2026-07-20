@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use vertex_engine::snowflake_id::{SnowFlakeGenerator, MAX_DATACENTER_ID, MAX_MACHINE_ID};
+use vertex_engine::snowflake_id::{MAX_DATACENTER_ID, MAX_MACHINE_ID, SnowFlakeGenerator};
 
 #[test]
 fn new_valid_min_ids() {

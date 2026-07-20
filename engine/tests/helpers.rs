@@ -5,7 +5,9 @@ pub use vertex_engine::order::Order;
 pub use vertex_engine::order_modify::OrderModify;
 pub use vertex_engine::snowflake_id::SnowFlakeGenerator;
 pub use vertex_engine::trading_pair::TradingPair;
-pub use vertex_engine::types::{Asset, OrderId, OrderStatus, OrderType, Price, Quantity, Side, UserId};
+pub use vertex_engine::types::{
+    Asset, OrderId, OrderStatus, OrderType, Price, Quantity, Side, UserId,
+};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 

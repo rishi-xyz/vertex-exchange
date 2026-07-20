@@ -155,7 +155,8 @@ fn apply_fill_partial_reduces_lock_credits_received() {
     user.add_balance(Asset::USDC, 10000);
     user.add_balance(Asset::ETH, 0);
     user.lock(1, Asset::USDC, 5000).unwrap();
-    user.apply_fill(&1, Asset::USDC, 2000, Asset::ETH, 1).unwrap();
+    user.apply_fill(&1, Asset::USDC, 2000, Asset::ETH, 1)
+        .unwrap();
     assert_eq!(user.get_locked_balance(Asset::USDC), 3000);
     assert_eq!(user.get_balance(&Asset::ETH), 1);
 }
@@ -166,7 +167,8 @@ fn apply_fill_full_removes_lock_entry() {
     user.add_balance(Asset::USDC, 10000);
     user.add_balance(Asset::ETH, 0);
     user.lock(1, Asset::USDC, 5000).unwrap();
-    user.apply_fill(&1, Asset::USDC, 5000, Asset::ETH, 5).unwrap();
+    user.apply_fill(&1, Asset::USDC, 5000, Asset::ETH, 5)
+        .unwrap();
     assert_eq!(user.get_locked_balance(Asset::USDC), 0);
     assert_eq!(user.get_balance(&Asset::ETH), 5);
 }
