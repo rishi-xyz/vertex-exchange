@@ -44,10 +44,10 @@ pub const MACHINE_SHIFT: u64 = SEQUENCE_BITS;
 pub const DATACENTER_SHIFT: u64 = MACHINE_SHIFT + MACHINE_BITS;
 pub const TIMESTAMP_SHIFT: u64 = DATACENTER_SHIFT + DATACENTER_BITS;
 
-/// Custom epoch (2026-07-15 00:00:00 UTC).
-/// Unix timestamp: 1784572800000 ms.
+/// Custom epoch (2024-01-01 00:00:00 UTC).
+/// Unix timestamp: 1704067200000 ms.
 /// All timestamps are stored as milliseconds since this fixed epoch.
-const EPOCH: u64 = 1_784_572_800_000;
+const EPOCH: u64 = 1_704_067_200_000;
 
 /// Generates unique 64-bit snowflake IDs.
 ///
@@ -62,9 +62,9 @@ const EPOCH: u64 = 1_784_572_800_000;
 /// # Examples
 ///
 /// ```rust
-/// let mut gen = SnowflakeGenerator::new(1, 1);
-/// let id1 = gen.next_id();
-/// let id2 = gen.next_id();
+/// let mut generator = vertex_engine::snowflake_id::SnowFlakeGenerator::new(1, 1);
+/// let id1 = generator.next_id();
+/// let id2 = generator.next_id();
 /// assert!(id2 > id1);
 /// ```
 #[derive(Debug)]
@@ -88,7 +88,7 @@ impl SnowFlakeGenerator {
     /// Panics if `machine_id > 31` or `datacenter_id > 31`.
     /// # Example
     /// ```rust
-    /// let mut gen = SnowflakeGenerator::new(1, 1);
+    /// let mut generator = vertex_engine::snowflake_id::SnowFlakeGenerator::new(1, 1);
     /// ```
     pub fn new(machine_id: u64, datacenter_id: u64) -> Self {
         assert!(

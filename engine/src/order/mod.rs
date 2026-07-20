@@ -73,6 +73,11 @@ impl Order {
     /// # Examples
     ///
     /// ```rust
+    /// use vertex_engine::order::Order;
+    /// use vertex_engine::types::{OrderType, Side, OrderStatus};
+    /// use uuid::Uuid;
+    ///
+    /// let user_id = Uuid::new_v4();
     /// let order = Order::new(
     ///     0, // example — engine assigns real ID
     ///     OrderType::GoodTillCancel,
