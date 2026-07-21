@@ -8,3 +8,4 @@ pub mod trade;
 pub mod trading_pair;
 pub mod types;
 pub mod user;
+pub mod wal;

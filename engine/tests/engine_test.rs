@@ -1,13 +1,14 @@
 mod helpers;
 
-use vertex_engine::engine::Engine;
+use vertex_engine::engine::CoreEngine;
+use vertex_engine::engine::trade_def::ExchangeEngine;
 use vertex_engine::trading_pair::TradingPair;
 use vertex_engine::types::{Asset, OrderType, Side};
 
 use helpers::{make_modify, make_order, make_pair, make_user_id};
 
-fn new_engine() -> Engine {
-    Engine::new(1, 1)
+fn new_engine() -> CoreEngine {
+    CoreEngine::new(1, 1)
 }
 
 fn eth_usdc() -> TradingPair {
