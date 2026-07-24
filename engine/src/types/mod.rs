@@ -2,6 +2,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::{order::Order, order_modify::OrderModify, trade::Trades, trading_pair::TradingPair};
+
 /// Price of an order in the smallest quote-unit (e.g. cents for USDC).
 ///
 /// Using `i32` allows negative prices to be rejected at the type level
@@ -89,6 +91,31 @@ pub enum Asset {
     USDC,
     /// Tether (stablecoin)
     USDT,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WalEntryType {
+    AddTradingPair {
+        pair: TradingPair,
+    },
+    RemoveTradingPair {
+        pair: TradingPair,
+    },
+    AddOrder {
+        pair: TradingPair,
+        order: Order,
+        trades: Option<Trades>,
+    },
+    CancelOrder {
+        pair: TradingPair,
+        order_id: OrderId,
+        success: bool,
+    },
+    ModifyOrder {
+        pair: TradingPair,
+        modify: OrderModify,
+        trades: Option<Trades>,
+    },
 }
 
 impl fmt::Display for Asset {
