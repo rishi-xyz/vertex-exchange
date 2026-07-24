@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package vertex;
+
+/// Supported crypto assets in the exchange.
+///
+/// V1 supports a fixed set. A production system would use a string or
+/// database-backed asset registry, but an enum keeps things simple for
+/// the matching engine prototype.
+enum Asset {
+    /// Ethereum
+    ETH = 0;
+    /// Solana
+    SOL = 1;
+    /// Bitcoin
+    BTC = 2;
+    /// USD Coin (stablecoin)
+    USDC = 3;
+    /// Tether (stablecoin)
+    USDT = 4;
+};
+
+/// Determines how long an order lives and how it interacts with the book.
+enum OrderType {
+    /// Remains in the book until explicitly cancelled or fully filled.
+    /// The default order type for limit orders.
+    GoodTillCancel = 0;
+    /// Remains in the book until end of the trading day, then auto-cancelled.
+    /// (V1: treated identically to GTC — day-end expiry is not yet implemented.)
+    GoodForDay = 1;
+    /// Immediate-or-cancel: matches as much as possible at the limit price,
+    /// then any unfilled remainder is discarded. Nothing rests in the book.
+    FillAndKill = 2;
+    /// Fill-or-kill: must be filled entirely in one match, or the entire
+    /// order is cancelled. (V1: not yet implemented — behaves like FAK.)
+    FillOrKill = 3;
+};
+
+/// Which side of the trade the order is on.
+enum Side {
+    /// Buyer — wants to purchase the base asset with quote currency.
+    Buy = 0;
+    /// Seller — wants to sell the base asset for quote currency.
+    Sell = 1;
+};
+
+/// Tracks the lifecycle state of an order.
+enum OrderStatus {
+    /// Order was explicitly cancelled by the user or the engine (e.g. FAK expiry).
+    Cancelled = 0;
+    /// Some quantity has been matched, but `remaining_quantity > 0`.
+    PartiallyFilled = 1;
+    /// All quantity has been matched (`remaining_quantity == 0`).
+    Filled = 2;
+    /// Initial state before any matching. Used as a default when constructing
+    /// TODO / DOC: add how we modify order
+    Empty = 3;
+};
+
+message TradingPair {
+    Asset base = 1;
+    Asset quote = 2;
+};
+
+message TradeInfo {
+    uint64 order_id = 1;
+    sint32 price = 2;
+    uint32 quantity = 3;
+    string user_id = 4;
+};
+
+message Trade {
+    uint64 trade_id = 1;
+    uint64 timestamp = 2;
+    TradeInfo bid_trade = 3;
+    TradeInfo ask_trade = 4;
+};
+
+message SubmitOrderRequest {
+    TradingPair pair  = 1;
+    OrderType order_type = 2;
+    Side side = 3;
+    sint32 price = 4;
+    uint32 quantity = 5;
+    string user_id = 6;
+};
+
+message SubmitOrderResponse {
+    uint64 order_id = 1;
+    repeated Trade trades = 2;
+};
+
+message CancelOrderRequest {
+    TradingPair pair = 1;
+    uint64 order_id = 2;
+};
+
+message CancelOrderResponse {
+    bool success = 1;
+}
+
+message ModifyOrderRequest {
+    TradingPair pair = 1;
+    uint64 order_id = 2;
+    sint32 price = 3;
+    uint32 quantity = 4;
+    Side side = 5;
+    string user_id = 6;
+}
+
+message ModifyOrderResponse {
+    repeated Trade trades = 1;
+}
+
+message LevelInfo {
+    sint32 price = 1;
+    uint32 quantity = 2;
+}
+
+message GetOrderBookRequest {
+    TradingPair pair = 1;
+}
+
+message GetOrderBookResponse {
+    repeated LevelInfo bids = 1;
+    repeated LevelInfo asks = 2;
+}
+
+service VertexEngineService {
+    rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
+    rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+    rpc ModifyOrder(ModifyOrderRequest) returns (ModifyOrderResponse);
+    rpc GetOrderBook(GetOrderBookRequest) returns (GetOrderBookResponse);
+};
