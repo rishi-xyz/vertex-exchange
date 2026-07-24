@@ -71,8 +71,8 @@ impl WalWriter {
         self.seq += 1;
         entry.seq = self.seq;
 
-        let mut line = serde_json::to_vec(&entry)
-            .map_err(|e| format!("WAL serialize error: {e}"))?;
+        let mut line =
+            serde_json::to_vec(&entry).map_err(|e| format!("WAL serialize error: {e}"))?;
         line.push(b'\n');
 
         self.writer

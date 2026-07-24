@@ -3,11 +3,11 @@ mod helpers;
 use std::fs;
 use std::io::Write;
 
-use vertex_engine::engine::trade_def::ExchangeEngine;
 use vertex_engine::engine::engine_from_env;
+use vertex_engine::engine::trade_def::ExchangeEngine;
 use vertex_engine::types::{Asset, OrderType, Side, WalEntryType};
-use vertex_engine::wal::{WalEntry, WalReader, WalWriter};
 use vertex_engine::wal::engine::WalEngine;
+use vertex_engine::wal::{WalEntry, WalReader, WalWriter};
 
 use helpers::{make_order, make_pair, make_user_id};
 
@@ -26,17 +26,23 @@ fn write_and_read_roundtrip() {
     let path = tmp_wal_path("roundtrip");
     let mut writer = WalWriter::new(&path).unwrap();
 
-    let entry = WalEntry::new(0, WalEntryType::AddTradingPair {
-        pair: make_pair(Asset::ETH, Asset::USDC),
-    });
+    let entry = WalEntry::new(
+        0,
+        WalEntryType::AddTradingPair {
+            pair: make_pair(Asset::ETH, Asset::USDC),
+        },
+    );
     let seq1 = writer.write(entry).unwrap();
     assert_eq!(seq1, 1);
 
-    let entry2 = WalEntry::new(0, WalEntryType::CancelOrder {
-        pair: make_pair(Asset::ETH, Asset::USDC),
-        order_id: 12345,
-        success: true,
-    });
+    let entry2 = WalEntry::new(
+        0,
+        WalEntryType::CancelOrder {
+            pair: make_pair(Asset::ETH, Asset::USDC),
+            order_id: 12345,
+            success: true,
+        },
+    );
     let seq2 = writer.write(entry2).unwrap();
     assert_eq!(seq2, 2);
 
@@ -57,7 +63,9 @@ fn write_and_read_roundtrip() {
         _ => panic!("Expected AddTradingPair"),
     }
     match entries[1].entry() {
-        WalEntryType::CancelOrder { order_id, success, .. } => {
+        WalEntryType::CancelOrder {
+            order_id, success, ..
+        } => {
             assert_eq!(*order_id, 12345);
             assert!(*success);
         }
@@ -114,9 +122,12 @@ fn seq_increments_across_writes() {
     let mut writer = WalWriter::new(&path).unwrap();
 
     for i in 0..5 {
-        let entry = WalEntry::new(0, WalEntryType::AddTradingPair {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-        });
+        let entry = WalEntry::new(
+            0,
+            WalEntryType::AddTradingPair {
+                pair: make_pair(Asset::ETH, Asset::USDC),
+            },
+        );
         let seq = writer.write(entry).unwrap();
         assert_eq!(seq, i + 1);
     }
@@ -132,9 +143,12 @@ fn writer_set_seq_resumes_from_last() {
     let mut writer = WalWriter::new(&path).unwrap();
 
     writer.set_seq(10);
-    let entry = WalEntry::new(0, WalEntryType::AddTradingPair {
-        pair: make_pair(Asset::ETH, Asset::USDC),
-    });
+    let entry = WalEntry::new(
+        0,
+        WalEntryType::AddTradingPair {
+            pair: make_pair(Asset::ETH, Asset::USDC),
+        },
+    );
     let seq = writer.write(entry).unwrap();
     assert_eq!(seq, 11);
 
@@ -161,17 +175,17 @@ fn replay_restores_trading_pair() {
     let path = tmp_wal_path("replay_pair");
     {
         let mut writer = WalWriter::new(&path).unwrap();
-        let entry = WalEntry::new(0, WalEntryType::AddTradingPair {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-        });
+        let entry = WalEntry::new(
+            0,
+            WalEntryType::AddTradingPair {
+                pair: make_pair(Asset::ETH, Asset::USDC),
+            },
+        );
         writer.write(entry).unwrap();
     }
 
     let engine = WalEngine::new(1, 1, &path).unwrap();
-    assert_eq!(
-        engine.size(&make_pair(Asset::ETH, Asset::USDC)),
-        Some(0)
-    );
+    assert_eq!(engine.size(&make_pair(Asset::ETH, Asset::USDC)), Some(0));
 
     let _ = fs::remove_file(&path);
 }
@@ -186,32 +200,29 @@ fn replay_restores_order_in_book() {
         let mut writer = WalWriter::new(&path).unwrap();
 
         // First add the trading pair
-        let pair_entry = WalEntry::new(0, WalEntryType::AddTradingPair {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-        });
+        let pair_entry = WalEntry::new(
+            0,
+            WalEntryType::AddTradingPair {
+                pair: make_pair(Asset::ETH, Asset::USDC),
+            },
+        );
         writer.write(pair_entry).unwrap();
 
         // Then add a resting GTC order
-        let order = make_order(
-            OrderType::GoodTillCancel,
-            Side::Buy,
-            50000,
-            10,
-            user,
+        let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, user);
+        let order_entry = WalEntry::new(
+            0,
+            WalEntryType::AddOrder {
+                pair: make_pair(Asset::ETH, Asset::USDC),
+                order,
+                trades: None,
+            },
         );
-        let order_entry = WalEntry::new(0, WalEntryType::AddOrder {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-            order,
-            trades: None,
-        });
         writer.write(order_entry).unwrap();
     }
 
     let engine = WalEngine::new(1, 1, &path).unwrap();
-    assert_eq!(
-        engine.size(&make_pair(Asset::ETH, Asset::USDC)),
-        Some(1)
-    );
+    assert_eq!(engine.size(&make_pair(Asset::ETH, Asset::USDC)), Some(1));
 
     let _ = fs::remove_file(&path);
 }
@@ -225,38 +236,44 @@ fn replay_restores_cancel() {
         let mut writer = WalWriter::new(&path).unwrap();
 
         // Add pair
-        writer.write(WalEntry::new(0, WalEntryType::AddTradingPair {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-        })).unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::AddTradingPair {
+                    pair: make_pair(Asset::ETH, Asset::USDC),
+                },
+            ))
+            .unwrap();
 
         // Add order
-        let order = make_order(
-            OrderType::GoodTillCancel,
-            Side::Buy,
-            50000,
-            10,
-            user,
-        );
+        let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, user);
         let order_id = order.get_order_id();
-        writer.write(WalEntry::new(0, WalEntryType::AddOrder {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-            order,
-            trades: None,
-        })).unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::AddOrder {
+                    pair: make_pair(Asset::ETH, Asset::USDC),
+                    order,
+                    trades: None,
+                },
+            ))
+            .unwrap();
 
         // Cancel it
-        writer.write(WalEntry::new(0, WalEntryType::CancelOrder {
-            pair: make_pair(Asset::ETH, Asset::USDC),
-            order_id,
-            success: true,
-        })).unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::CancelOrder {
+                    pair: make_pair(Asset::ETH, Asset::USDC),
+                    order_id,
+                    success: true,
+                },
+            ))
+            .unwrap();
     }
 
     let engine = WalEngine::new(1, 1, &path).unwrap();
-    assert_eq!(
-        engine.size(&make_pair(Asset::ETH, Asset::USDC)),
-        Some(0)
-    );
+    assert_eq!(engine.size(&make_pair(Asset::ETH, Asset::USDC)), Some(0));
 
     let _ = fs::remove_file(&path);
 }
@@ -298,7 +315,9 @@ fn wal_engine_add_order_writes_entry_before_mutation() {
 
     // Second entry: AddOrder
     match entries[1].entry() {
-        WalEntryType::AddOrder { pair: p, order: o, .. } => {
+        WalEntryType::AddOrder {
+            pair: p, order: o, ..
+        } => {
             assert_eq!(p.base, Asset::ETH);
             assert_eq!(o.get_order_id(), order_id);
         }
@@ -330,7 +349,11 @@ fn wal_engine_cancel_order_writes_entry() {
     assert_eq!(entries.len(), 3);
 
     match entries[2].entry() {
-        WalEntryType::CancelOrder { order_id: id, success, .. } => {
+        WalEntryType::CancelOrder {
+            order_id: id,
+            success,
+            ..
+        } => {
             assert_eq!(*id, order_id);
             assert!(*success);
         }

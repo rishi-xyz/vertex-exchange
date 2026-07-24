@@ -125,9 +125,7 @@ pub fn engine_from_env() -> EngineWrapper {
         .unwrap_or(false);
     if wal_enabled {
         let path = std::env::var("WAL_PATH").unwrap_or_else(|_| "engine.wal".into());
-        EngineWrapper::Wal(
-            WalEngine::new(1, 1, &path).expect("Failed to initialize WAL engine"),
-        )
+        EngineWrapper::Wal(WalEngine::new(1, 1, &path).expect("Failed to initialize WAL engine"))
     } else {
         EngineWrapper::Core(CoreEngine::new(1, 1))
     }
