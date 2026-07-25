@@ -20,6 +20,10 @@ impl CoreEngine {
             generator: SnowFlakeGenerator::new(machine_id, datacenter_id),
         }
     }
+
+    pub fn next_id(&mut self) -> OrderId {
+        self.generator.next_id()
+    }
 }
 
 impl ExchangeEngine for CoreEngine {
@@ -66,6 +70,15 @@ impl ExchangeEngine for CoreEngine {
 pub enum EngineWrapper {
     Core(CoreEngine),
     Wal(WalEngine),
+}
+
+impl EngineWrapper {
+    pub fn next_id(&mut self) -> OrderId {
+        match self {
+            EngineWrapper::Core(e) => e.next_id(),
+            EngineWrapper::Wal(e) => e.next_id(),
+        }
+    }
 }
 
 impl ExchangeEngine for EngineWrapper {

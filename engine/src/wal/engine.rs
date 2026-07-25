@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     engine::{CoreEngine, trade_def::ExchangeEngine},
-    types::WalEntryType,
+    types::{OrderId, WalEntryType},
     wal::{WalEntry, WalReader, WalWriter},
 };
 
@@ -44,6 +44,10 @@ impl WalEngine {
 
     pub fn core(&self) -> &CoreEngine {
         &self.inner
+    }
+
+    pub fn next_id(&mut self) -> OrderId {
+        self.inner.next_id()
     }
 
     /// replay function
