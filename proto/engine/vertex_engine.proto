@@ -126,9 +126,21 @@ message GetOrderBookResponse {
   repeated LevelInfo asks = 2;
 }
 
-service VertexEngineService {
+message AddTradingPairRequest {
+  TradingPair pair = 1;
+}
+
+message AddTradingPairResponse {
+  bool success = 1;
+}
+
+service UserSerivces {
   rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
   rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
   rpc ModifyOrder(ModifyOrderRequest) returns (ModifyOrderResponse);
   rpc GetOrderBook(GetOrderBookRequest) returns (GetOrderBookResponse);
+}
+
+service EngineServices {
+  rpc AddTradingPair(AddTradingPairRequest) returns (AddTradingPairResponse);
 }

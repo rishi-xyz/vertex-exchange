@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::{
     engine::{EngineWrapper, trade_def::ExchangeEngine},
-    grpc::proto::vertex_engine_service_server::VertexEngineService,
+    grpc::proto::engine_services_server::EngineServices,
+    grpc::proto::user_serivces_server::UserSerivces,
     level_info::OrderBookLevelInfo,
     order::Order,
     order_modify::OrderModify,
@@ -40,6 +41,10 @@ pub enum EngineCommand {
     GetOrderBook {
         pair: TradingPair,
         reply: oneshot::Sender<Option<OrderBookLevelInfo>>,
+    },
+    AddTradingPair {
+        pair: TradingPair,
+        reply: oneshot::Sender<()>,
     },
 }
 
@@ -98,6 +103,10 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
             EngineCommand::GetOrderBook { pair, reply } => {
                 let info = engine.get_order_info(&pair);
                 let _ = reply.send(info);
+            }
+            EngineCommand::AddTradingPair { pair, reply } => {
+                engine.add_trading_pair(pair);
+                let _ = reply.send(());
             }
         }
     }
@@ -166,7 +175,7 @@ fn engine_trade_to_proto(trade: trade::Trade) -> proto::Trade {
 }
 
 #[tonic::async_trait]
-impl VertexEngineService for EngineService {
+impl UserSerivces for EngineService {
     async fn submit_order(
         &self,
         request: Request<proto::SubmitOrderRequest>,
@@ -323,5 +332,33 @@ impl VertexEngineService for EngineService {
             .collect();
 
         Ok(Response::new(proto::GetOrderBookResponse { bids, asks }))
+    }
+}
+
+#[tonic::async_trait]
+impl EngineServices for EngineService {
+    async fn add_trading_pair(
+        &self,
+        request: tonic::Request<proto::AddTradingPairRequest>,
+    ) -> Result<tonic::Response<proto::AddTradingPairResponse>, Status> {
+        let req = request.into_inner();
+        let pair = proto_pair_to_engine(
+            req.pair
+                .ok_or_else(|| Status::invalid_argument("missing trading pair"))?,
+        )?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::AddTradingPair {
+                pair,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::internal("engine unavailable"))?;
+        reply_rx
+            .await
+            .map_err(|_| Status::internal("engine task crashed"))?;
+        Ok(Response::new(proto::AddTradingPairResponse {
+            success: true,
+        }))
     }
 }
