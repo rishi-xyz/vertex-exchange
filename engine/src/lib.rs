@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod grpc;
 pub mod level_info;
 pub mod order;
 pub mod order_modify;
