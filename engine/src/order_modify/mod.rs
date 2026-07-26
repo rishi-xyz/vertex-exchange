@@ -21,16 +21,22 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use vertex_engine::order_modify::OrderModify;
+/// use vertex_engine::types::{OrderStatus, Side};
+/// use uuid::Uuid;
+///
+/// let user_id = Uuid::new_v4();
 /// let modify = OrderModify::new(
-///     old_order_id,
-///     51000,      // new price
+///     12345,          // order_id of the order to replace
+///     51000,          // new price
 ///     Side::Buy,
-///     5,          // new quantity
+///     5,              // new quantity
 ///     OrderStatus::Empty,
 ///     user_id,
 /// );
-/// engine.modify_order(&pair, modify);
+/// assert_eq!(modify.get_order_id(), 12345);
+/// assert_eq!(modify.get_price(), 51000);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderModify {

@@ -16,7 +16,9 @@ use crate::types::{Price, Quantity};
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use vertex_engine::level_info::LevelInfo;
+///
 /// let level = LevelInfo::new(50000, 120);
 /// assert_eq!(level.price, 50000);
 /// assert_eq!(level.quantity, 120);

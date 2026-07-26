@@ -189,11 +189,25 @@ impl Order {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// order.fills(5).unwrap();
-    /// assert_eq!(order.get_remaining_quantity(), 5);
-    /// assert_eq!(order.get_status(), OrderStatus::PartiallyFilled);
-    /// ```
+/// ```
+/// use vertex_engine::order::Order;
+/// use vertex_engine::types::{OrderType, Side, OrderStatus};
+/// use uuid::Uuid;
+///
+/// let user_id = Uuid::new_v4();
+/// let mut order = Order::new(
+///     0,
+///     OrderType::GoodTillCancel,
+///     Side::Buy,
+///     OrderStatus::Empty,
+///     50000,
+///     10,
+///     user_id,
+/// );
+/// order.fills(5).unwrap();
+/// assert_eq!(order.get_remaining_quantity(), 5);
+/// assert_eq!(order.get_status(), OrderStatus::PartiallyFilled);
+/// ```
     pub fn fills(&mut self, quantity: Quantity) -> Result<(), String> {
         if quantity > self.remaining_quantity {
             // tracing warn

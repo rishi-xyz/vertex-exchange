@@ -18,7 +18,10 @@ use crate::types::Asset;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use vertex_engine::trading_pair::TradingPair;
+/// use vertex_engine::types::Asset;
+///
 /// let eth_usdc = TradingPair::new(Asset::ETH, Asset::USDC);
 /// assert_eq!(eth_usdc.base, Asset::ETH);
 /// assert_eq!(eth_usdc.quote, Asset::USDC);

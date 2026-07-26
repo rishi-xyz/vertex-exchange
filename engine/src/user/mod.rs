@@ -45,12 +45,15 @@ pub struct LockEntry {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
+/// use vertex_engine::user::User;
+/// use vertex_engine::types::Asset;
+///
 /// let mut user = User::new(None); // generates random UUID
 /// user.add_balance(Asset::USDC, 10000);
 /// assert_eq!(user.get_available_balance(&Asset::USDC), 10000);
 ///
-/// user.lock(order_id, Asset::USDC, 5000).unwrap();
+/// user.lock(1, Asset::USDC, 5000).unwrap();
 /// assert_eq!(user.get_available_balance(&Asset::USDC), 5000);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -21,9 +21,14 @@ use crate::types::{OrderId, Price, Quantity, TradeId, UserId};
 ///
 /// # Examples
 ///
-/// ```ignore
-/// let info = TradeInfo::new(order_id, 50000, 10, user_id);
+/// ```
+/// use vertex_engine::trade::TradeInfo;
+/// use uuid::Uuid;
+///
+/// let user_id = Uuid::new_v4();
+/// let info = TradeInfo::new(12345, 50000, 10, user_id);
 /// assert_eq!(info.get_price(), 50000);
+/// assert_eq!(info.get_quantity(), 10);
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeInfo {
