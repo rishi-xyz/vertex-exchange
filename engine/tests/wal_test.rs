@@ -371,7 +371,7 @@ fn wal_engine_cancel_order_writes_entry() {
 fn engine_from_env_default_is_core() {
     // Ensure WAL_ENABLED is not set
     unsafe { std::env::remove_var("WAL_ENABLED") };
-    let engine = engine_from_env();
+    let engine = engine_from_env(1, 1);
     // Verify it's a Core variant by checking size returns None for unknown pair
     assert!(engine.size(&make_pair(Asset::ETH, Asset::USDC)).is_none());
 }
@@ -384,7 +384,7 @@ fn engine_from_env_wal_enabled() {
         std::env::set_var("WAL_PATH", path.to_str().unwrap());
     }
 
-    let engine = engine_from_env();
+    let engine = engine_from_env(1, 1);
     assert!(engine.size(&make_pair(Asset::ETH, Asset::USDC)).is_none());
 
     // Clean up

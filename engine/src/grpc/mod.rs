@@ -48,6 +48,7 @@ pub enum EngineCommand {
     },
 }
 
+#[derive(Debug, Clone)]
 pub struct EngineService {
     tx: mpsc::Sender<EngineCommand>,
 }
