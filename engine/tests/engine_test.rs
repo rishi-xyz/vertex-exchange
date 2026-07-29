@@ -1,7 +1,7 @@
 mod helpers;
 
 use vertex_engine::engine::CoreEngine;
-use vertex_engine::engine::trade_def::ExchangeEngine;
+use vertex_engine::engine::trade_def::{ExchangeEngine, UsersEngine};
 use vertex_engine::trading_pair::TradingPair;
 use vertex_engine::types::{Asset, OrderType, Side};
 
@@ -196,4 +196,132 @@ fn full_lifecycle_add_add_cancel_check_size() {
 
     engine.cancel_order(&eth_usdc(), &o2.get_order_id());
     assert_eq!(engine.size(&eth_usdc()), Some(0));
+}
+
+#[test]
+fn add_user_creates_user() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(0));
+}
+
+#[test]
+fn add_user_duplicate_noop() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.add_user(uid);
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(0));
+}
+
+#[test]
+fn deposit_balance_increases_balance() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 10000).unwrap();
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(10000));
+}
+
+#[test]
+fn deposit_balance_accumulates() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 5000).unwrap();
+    engine.deposit_balance(uid, Asset::USDC, 3000).unwrap();
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(8000));
+}
+
+#[test]
+fn deposit_balance_multiple_assets() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 10000).unwrap();
+    engine.deposit_balance(uid, Asset::ETH, 5).unwrap();
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(10000));
+    assert_eq!(engine.get_balance(uid, Asset::ETH), Ok(5));
+}
+
+#[test]
+fn withdraw_balance_decreases_balance() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 10000).unwrap();
+    engine.withdraw_balance(uid, Asset::USDC, 3000).unwrap();
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(7000));
+}
+
+#[test]
+fn withdraw_balance_insufficient_errs() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    let result = engine.withdraw_balance(uid, Asset::USDC, 1000);
+    assert!(result.is_err());
+}
+
+#[test]
+fn withdraw_balance_nonexistent_user_errs() {
+    let mut engine = new_engine();
+    let result = engine.withdraw_balance(make_user_id(), Asset::USDC, 1000);
+    assert!(result.is_err());
+}
+
+#[test]
+fn get_balance_nonexistent_user_errs() {
+    let engine = new_engine();
+    let result = engine.get_balance(make_user_id(), Asset::USDC);
+    assert!(result.is_err());
+}
+
+#[test]
+fn remove_user_removes_user_and_returns_balances() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 10000).unwrap();
+    engine.deposit_balance(uid, Asset::ETH, 5).unwrap();
+    let balances = engine.remove_user(uid).unwrap();
+    assert_eq!(balances.get(&Asset::USDC), Some(&10000));
+    assert_eq!(balances.get(&Asset::ETH), Some(&5));
+    assert!(engine.get_balance(uid, Asset::USDC).is_err());
+}
+
+#[test]
+fn remove_user_cancels_orders_and_returns_balances() {
+    let mut engine = new_engine();
+    engine.add_trading_pair(eth_usdc());
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 50000).unwrap();
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
+    engine.add_order(&eth_usdc(), &order);
+    assert_eq!(engine.size(&eth_usdc()), Some(1));
+    let balances = engine.remove_user(uid).unwrap();
+    assert_eq!(balances.get(&Asset::USDC), Some(&50000));
+    assert_eq!(engine.size(&eth_usdc()), Some(0));
+}
+
+#[test]
+fn remove_user_nonexistent_errs() {
+    let mut engine = new_engine();
+    let result = engine.remove_user(make_user_id());
+    assert!(result.is_err());
+}
+
+#[test]
+fn full_user_lifecycle() {
+    let mut engine = new_engine();
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 50000).unwrap();
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(50000));
+    engine.withdraw_balance(uid, Asset::USDC, 10000).unwrap();
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(40000));
+    let balances = engine.remove_user(uid).unwrap();
+    assert_eq!(balances.get(&Asset::USDC), Some(&40000));
 }

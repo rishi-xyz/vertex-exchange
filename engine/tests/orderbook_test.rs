@@ -1085,3 +1085,59 @@ fn empty_book_lifecycle() {
     book.cancel_order(&order.get_order_id());
     assert_eq!(book.size(), 0);
 }
+
+#[test]
+fn cancel_orders_for_user_none_found() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
+    book.add_order(&order, &mut generator);
+    let removed = book.cancel_orders_for_user(make_user_id());
+    assert!(removed.is_empty());
+    assert_eq!(book.size(), 1);
+}
+
+#[test]
+fn cancel_orders_for_user_removes_all() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+    let uid = uid_a();
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Sell, 51000, 5, uid), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Buy, 49000, 8, uid_b()), &mut generator);
+    assert_eq!(book.size(), 3);
+    let removed = book.cancel_orders_for_user(uid);
+    assert_eq!(removed.len(), 2);
+    assert_eq!(book.size(), 1);
+}
+
+#[test]
+fn cancel_orders_for_user_at_multiple_price_levels() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+    let uid = uid_a();
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Buy, 51000, 15, uid), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Sell, 52000, 20, uid), &mut generator);
+    assert_eq!(book.size(), 3);
+    let removed = book.cancel_orders_for_user(uid);
+    assert_eq!(removed.len(), 3);
+    assert_eq!(book.size(), 0);
+}
+
+#[test]
+fn cancel_orders_for_user_preserves_other_users_orders() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a()), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Sell, 51000, 5, uid_b()), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Buy, 49000, 8, uid_a()), &mut generator);
+    book.add_order(&make_order(OrderType::GoodTillCancel, Side::Sell, 52000, 6, uid_b()), &mut generator);
+    assert_eq!(book.size(), 4);
+    let removed = book.cancel_orders_for_user(uid_a());
+    assert_eq!(removed.len(), 2);
+    assert_eq!(book.size(), 2);
+    let removed = book.cancel_orders_for_user(uid_b());
+    assert_eq!(removed.len(), 2);
+    assert_eq!(book.size(), 0);
+}

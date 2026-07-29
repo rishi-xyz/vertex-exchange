@@ -303,3 +303,130 @@ async fn test_get_order_book_empty_pair() {
     assert!(book.bids.is_empty());
     assert!(book.asks.is_empty());
 }
+
+#[tokio::test]
+async fn test_add_user_returns_valid_uuid() {
+    let (_, mut engine_client) = setup().await;
+    let resp = engine_client
+        .add_user(proto::AddUserRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let uid = uuid::Uuid::parse_str(&resp.user_id);
+    assert!(uid.is_ok());
+}
+
+async fn add_user(engine_client: &mut EngineServicesClient<Channel>) -> String {
+    engine_client
+        .add_user(proto::AddUserRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .user_id
+}
+
+#[tokio::test]
+async fn test_deposit_balance() {
+    let (_, mut engine_client) = setup().await;
+    let user_id = add_user(&mut engine_client).await;
+    let resp = engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 10000,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(resp.success);
+}
+
+#[tokio::test]
+async fn test_withdraw_balance() {
+    let (_, mut engine_client) = setup().await;
+    let user_id = add_user(&mut engine_client).await;
+    engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 5000,
+        })
+        .await
+        .unwrap();
+    let resp = engine_client
+        .withdraw_balance(proto::WithdrawBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 2000,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(resp.success);
+}
+
+#[tokio::test]
+async fn test_withdraw_insufficient_balance_fails() {
+    let (_, mut engine_client) = setup().await;
+    let user_id = add_user(&mut engine_client).await;
+    engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 1000,
+        })
+        .await
+        .unwrap();
+    let result = engine_client
+        .withdraw_balance(proto::WithdrawBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 2000,
+        })
+        .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_remove_user_returns_success() {
+    let (_, mut engine_client) = setup().await;
+    let user_id = add_user(&mut engine_client).await;
+    let resp = engine_client
+        .remove_user(proto::RemoveUserRequest {
+            user_id: user_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(resp.success);
+}
+
+#[tokio::test]
+async fn test_add_user_then_deposit_withdraw_and_remove() {
+    let (_, mut engine_client) = setup().await;
+    let user_id = add_user(&mut engine_client).await;
+    engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 10000,
+        })
+        .await
+        .unwrap();
+    engine_client
+        .withdraw_balance(proto::WithdrawBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 3000,
+        })
+        .await
+        .unwrap();
+    let resp = engine_client
+        .remove_user(proto::RemoveUserRequest {
+            user_id: user_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(resp.success);
+}
