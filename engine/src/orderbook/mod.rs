@@ -597,4 +597,33 @@ impl OrderBook {
         }
         OrderBookLevelInfo::new(bids_info, asks_info)
     }
+
+    pub fn cancel_orders_for_user(&mut self, user_id: UserId) -> Vec<OrderId> {
+        // collect order ids belonging to this user
+        let to_remove: Vec<OrderId> = self
+            .orders_map
+            .iter()
+            .filter(|(_, order)| order.get_user_id() == user_id)
+            .map(|(id, _)| *id)
+            .collect();
+
+        // remove from price-level deques
+        for orders in self.bids_map.values_mut() {
+            orders.retain(|o| o.get_user_id() != user_id);
+        }
+        for orders in self.asks_map.values_mut() {
+            orders.retain(|o| o.get_user_id() != user_id);
+        }
+
+        // remove from flat orders_map
+        for id in &to_remove {
+            self.orders_map.remove(id);
+        }
+
+        // clean up empty price levels
+        self.bids_map.retain(|_, orders| !orders.is_empty());
+        self.asks_map.retain(|_, orders| !orders.is_empty());
+
+        to_remove
+    }
 }

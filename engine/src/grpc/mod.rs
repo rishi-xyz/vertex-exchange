@@ -2,14 +2,21 @@ pub mod proto {
     tonic::include_proto!("vertex_engine");
 }
 
+use std::collections::HashMap;
+
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::{
-    engine::{EngineWrapper, trade_def::ExchangeEngine},
-    grpc::proto::engine_services_server::EngineServices,
-    grpc::proto::user_serivces_server::UserSerivces,
+    engine::{
+        EngineWrapper,
+        trade_def::{ExchangeEngine, UsersEngine},
+    },
+    grpc::proto::{
+        DepositBalanceResponse, RemoveUserResponse, WithdrawBalanceResponse,
+        engine_services_server::EngineServices, user_serivces_server::UserSerivces,
+    },
     level_info::OrderBookLevelInfo,
     order::Order,
     order_modify::OrderModify,
@@ -19,6 +26,7 @@ use crate::{
 };
 
 pub enum EngineCommand {
+    // Engine service commands
     SubmitOrder {
         pair: TradingPair,
         order_type: OrderType,
@@ -45,6 +53,26 @@ pub enum EngineCommand {
     AddTradingPair {
         pair: TradingPair,
         reply: oneshot::Sender<()>,
+    },
+    // user service commands
+    AddUser {
+        reply: oneshot::Sender<Uuid>,
+    },
+    RemoveUser {
+        user_id: Uuid,
+        reply: oneshot::Sender<Result<HashMap<Asset, Quantity>, String>>,
+    },
+    DepositBalance {
+        user_id: Uuid,
+        asset: Asset,
+        quantity: Quantity,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    WithdrawBalance {
+        user_id: Uuid,
+        asset: Asset,
+        quantity: Quantity,
+        reply: oneshot::Sender<Result<(), String>>,
     },
 }
 
@@ -83,7 +111,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     user_id,
                 );
                 let trades = engine.add_order(&pair, &order); // main engine execution
-                let _ = reply.send(trades.map(|t| (order_id, t))); // sending back through rpc
+                let _  = reply.send(trades.map(|t| (order_id, t))); // sending back through rpc
             }
             EngineCommand::CancelOrder {
                 pair,
@@ -91,7 +119,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 let sucess = engine.cancel_order(&pair, &order_id);
-                let _ = reply.send(sucess);
+                let _  = reply.send(sucess);
             }
             EngineCommand::ModifyOrder {
                 pair,
@@ -108,6 +136,33 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
             EngineCommand::AddTradingPair { pair, reply } => {
                 engine.add_trading_pair(pair);
                 let _ = reply.send(());
+            }
+            EngineCommand::AddUser { reply } => {
+                let user_id = Uuid::new_v4();
+                engine.add_user(user_id);
+                let _ = reply.send(user_id);
+            }
+            EngineCommand::RemoveUser { user_id, reply } => {
+                let result = engine.remove_user(user_id);
+                let _  = reply.send(result);
+            }
+            EngineCommand::DepositBalance {
+                user_id,
+                asset,
+                quantity,
+                reply,
+            } => {
+                let result = engine.deposit_balance(user_id, asset, quantity);
+                let _  = reply.send(result);
+            }
+            EngineCommand::WithdrawBalance {
+                user_id,
+                asset,
+                quantity,
+                reply,
+            } => {
+                let result = engine.withdraw_balance(user_id, asset, quantity);
+                let _ = reply.send(result);
             }
         }
     }
@@ -146,15 +201,16 @@ fn proto_pair_to_engine(pair: proto::TradingPair) -> Result<TradingPair, Status>
     ))
 }
 
-fn engine_asset_to_proto(asset: crate::types::Asset) -> proto::Asset {
-    match asset {
-        crate::types::Asset::ETH => proto::Asset::Eth,
-        crate::types::Asset::SOL => proto::Asset::Sol,
-        crate::types::Asset::BTC => proto::Asset::Btc,
-        crate::types::Asset::USDC => proto::Asset::Usdc,
-        crate::types::Asset::USDT => proto::Asset::Usdt,
-    }
-}
+// #[warn(dead_code)]
+// fn engine_asset_to_proto(asset: crate::types::Asset) -> proto::Asset {
+//     match asset {
+//         crate::types::Asset::ETH => proto::Asset::Eth,
+//         crate::types::Asset::SOL => proto::Asset::Sol,
+//         crate::types::Asset::BTC => proto::Asset::Btc,
+//         crate::types::Asset::USDC => proto::Asset::Usdc,
+//         crate::types::Asset::USDT => proto::Asset::Usdt,
+//     }
+// }
 
 fn engine_trade_to_proto(trade: trade::Trade) -> proto::Trade {
     proto::Trade {
@@ -361,5 +417,100 @@ impl EngineServices for EngineService {
         Ok(Response::new(proto::AddTradingPairResponse {
             success: true,
         }))
+    }
+
+    async fn add_user(
+        &self,
+        _request: tonic::Request<proto::AddUserRequest>,
+    ) -> Result<tonic::Response<proto::AddUserResponse>, Status> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::AddUser { reply: reply_tx })
+            .await
+            .map_err(|_| Status::internal("Engine Error"))?;
+        let user_id = reply_rx
+            .await
+            .map_err(|_| Status::internal("Engine crashed"))?
+            .to_string();
+        Ok(Response::new(proto::AddUserResponse { user_id }))
+    }
+    async fn remove_user(
+        &self,
+        request: tonic::Request<proto::RemoveUserRequest>,
+    ) -> Result<tonic::Response<proto::RemoveUserResponse>, Status> {
+        let req = request.into_inner();
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Invalid User Id"))?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::RemoveUser {
+                user_id,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::internal("Engine unavailable"))?;
+        let result = reply_rx
+            .await
+            .map_err(|_| Status::internal("Engine crashed"))?;
+        match result {
+            Ok(_map) => Ok(Response::new(RemoveUserResponse { success: true })),
+            Err(e) => Err(Status::failed_precondition(e)),
+        }
+    }
+    async fn deposit_balance(
+        &self,
+        request: tonic::Request<proto::DepositBalanceRequest>,
+    ) -> Result<tonic::Response<proto::DepositBalanceResponse>, Status> {
+        let req = request.into_inner();
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Invalid User Id"))?;
+        let asset = proto_asset_to_engine(req.asset())
+            .map_err(|_| Status::invalid_argument("Invalid Asset"))?;
+        let quantity = req.quantity;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::DepositBalance {
+                user_id,
+                asset,
+                quantity,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::internal("Engine unavailable"))?;
+        let result = reply_rx
+            .await
+            .map_err(|_| Status::internal("Engine crashed"))?;
+        match result {
+            Ok(()) => Ok(Response::new(DepositBalanceResponse { success: true })),
+            Err(e) => Err(Status::failed_precondition(e)),
+        }
+    }
+    async fn withdraw_balance(
+        &self,
+        request: tonic::Request<proto::WithdrawBalanceRequest>,
+    ) -> Result<tonic::Response<proto::WithdrawBalanceResponse>, Status> {
+        let req = request.into_inner();
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Invalid User Id"))?;
+        let asset = proto_asset_to_engine(req.asset())
+            .map_err(|_| Status::invalid_argument("Invalid Asset"))?;
+        let quantity = req.quantity;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::WithdrawBalance {
+                user_id,
+                asset,
+                quantity,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::internal("Engine unavailable"))?;
+        let result = reply_rx
+            .await
+            .map_err(|_| Status::internal("Engine crashed"))?;
+        match result {
+            Ok(()) => Ok(Response::new(WithdrawBalanceResponse { success: true })),
+            Err(e) => Err(Status::failed_precondition(e)),
+        }
     }
 }

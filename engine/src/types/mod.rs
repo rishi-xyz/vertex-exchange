@@ -95,6 +95,7 @@ pub enum Asset {
 
 #[derive(Serialize, Deserialize)]
 pub enum WalEntryType {
+    // engine wal entry
     AddTradingPair {
         pair: TradingPair,
     },
@@ -115,6 +116,23 @@ pub enum WalEntryType {
         pair: TradingPair,
         modify: OrderModify,
         trades: Option<Trades>,
+    },
+    // user wal entry
+    AddUser {
+        user_id: UserId,
+    },
+    RemoveUser {
+        user_id: UserId,
+    },
+    DepositBalance {
+        user_id: UserId,
+        asset: Asset,
+        quantity: Quantity,
+    },
+    WithdrawBalance {
+        user_id: UserId,
+        asset: Asset,
+        quantity: Quantity,
     },
 }
 

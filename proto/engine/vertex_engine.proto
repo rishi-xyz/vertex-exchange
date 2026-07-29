@@ -134,6 +134,40 @@ message AddTradingPairResponse {
   bool success = 1;
 }
 
+message AddUserRequest {}
+
+message AddUserResponse {
+  string user_id = 1;
+}
+
+message RemoveUserRequest {
+  string user_id = 1;
+}
+
+message RemoveUserResponse {
+  bool success = 1;
+}
+
+message DepositBalanceRequest {
+  string user_id = 1;
+  Asset asset = 2;
+  uint32 quantity = 3;
+}
+
+message DepositBalanceResponse {
+  bool success = 1;
+}
+
+message WithdrawBalanceRequest {
+  string user_id = 1;
+  Asset asset = 2;
+  uint32 quantity = 3;
+}
+
+message WithdrawBalanceResponse {
+  bool success = 1;
+}
+
 service UserSerivces {
   rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
   rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
@@ -143,4 +177,8 @@ service UserSerivces {
 
 service EngineServices {
   rpc AddTradingPair(AddTradingPairRequest) returns (AddTradingPairResponse);
+  rpc AddUser(AddUserRequest) returns (AddUserResponse);
+  rpc RemoveUser(RemoveUserRequest) returns (RemoveUserResponse);
+  rpc DepositBalance(DepositBalanceRequest) returns (DepositBalanceResponse);
+  rpc WithdrawBalance(WithdrawBalanceRequest) returns (WithdrawBalanceResponse);
 }

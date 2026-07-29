@@ -226,4 +226,25 @@ impl User {
         *self.balances.entry(credit_asset).or_insert(0) += credit_amount;
         Ok(())
     }
+
+    /// Debits user's available balance
+    pub fn substract_balance(&mut self, asset: Asset, amount: Quantity) -> Result<(), String> {
+        let available = self.get_available_balance(&asset);
+        if available < amount {
+            return Err(("Insufficient Balance").into());
+        }
+        // check above gurrantes the underflow but still for good practice
+        let entry = self.balances.entry(asset).or_insert(0);
+        *entry = entry.checked_sub(amount).ok_or("Balance Underflow")?;
+        Ok(())
+    }
+
+    /// get all balances across the assets including locked for user
+    pub fn get_all_balances(&self) -> &HashMap<Asset, Quantity> {
+        &self.balances
+    }
+
+    pub fn get_all_locked_balances(&self) -> &HashMap<OrderId, LockEntry> {
+        &self.locked_orders
+    }
 }

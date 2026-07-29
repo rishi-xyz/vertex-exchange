@@ -1,8 +1,11 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use crate::{
-    engine::{CoreEngine, trade_def::ExchangeEngine},
-    types::{OrderId, WalEntryType},
+    engine::{
+        CoreEngine,
+        trade_def::{ExchangeEngine, UsersEngine},
+    },
+    types::{Asset, OrderId, Quantity, WalEntryType},
     wal::{WalEntry, WalReader, WalWriter},
 };
 
@@ -79,6 +82,26 @@ impl WalEngine {
                 trades: _,
             } => {
                 engine.modify_order(pair, modify.clone());
+            }
+            WalEntryType::AddUser { user_id } => {
+                engine.add_user(*user_id);
+            }
+            WalEntryType::RemoveUser { user_id } => {
+                let _ = engine.remove_user(*user_id);
+            }
+            WalEntryType::DepositBalance {
+                user_id,
+                asset,
+                quantity,
+            } => {
+                let _ = engine.deposit_balance(*user_id, *asset, *quantity);
+            }
+            WalEntryType::WithdrawBalance {
+                user_id,
+                asset,
+                quantity,
+            } => {
+                let _ = engine.withdraw_balance(*user_id, *asset, *quantity);
             }
         }
     }
@@ -160,5 +183,64 @@ impl ExchangeEngine for WalEngine {
 
     fn size(&self, pair: &crate::trading_pair::TradingPair) -> Option<usize> {
         self.inner.size(pair)
+    }
+}
+
+impl UsersEngine for WalEngine {
+    fn add_user(&mut self, user_id: crate::types::UserId) {
+        let entry = WalEntry::new(
+            0, // filler will be replaced by atual seq value by writer function
+            WalEntryType::AddUser { user_id },
+        );
+        self.writer.write(entry).unwrap();
+        self.inner.add_user(user_id);
+    }
+    fn remove_user(
+        &mut self,
+        user_id: crate::types::UserId,
+    ) -> Result<HashMap<Asset, Quantity>, String> {
+        let entry = WalEntry::new(0, WalEntryType::RemoveUser { user_id });
+        self.writer.write(entry).unwrap();
+        self.inner.remove_user(user_id)
+    }
+
+    fn deposit_balance(
+        &mut self,
+        user_id: crate::types::UserId,
+        asset: crate::types::Asset,
+        quantity: crate::types::Quantity,
+    ) -> Result<(), String> {
+        let entry = WalEntry::new(
+            0,
+            WalEntryType::DepositBalance {
+                user_id,
+                asset,
+                quantity,
+            },
+        );
+        self.writer.write(entry).unwrap();
+        self.inner.deposit_balance(user_id, asset, quantity)
+    }
+
+    fn withdraw_balance(
+        &mut self,
+        user_id: crate::types::UserId,
+        asset: crate::types::Asset,
+        quantity: crate::types::Quantity,
+    ) -> Result<(), String> {
+        let entry = WalEntry::new(
+            0,
+            WalEntryType::WithdrawBalance {
+                user_id,
+                asset,
+                quantity,
+            },
+        );
+        self.writer.write(entry).unwrap();
+        self.inner.withdraw_balance(user_id, asset, quantity)
+    }
+
+    fn get_balance(&self, user_id: crate::types::UserId, asset: Asset) -> Result<Quantity, String> {
+        self.inner.get_balance(user_id, asset)
     }
 }

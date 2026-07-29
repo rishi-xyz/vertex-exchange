@@ -3,13 +3,22 @@ pub mod trade_def;
 use std::collections::HashMap;
 
 use crate::{
-    engine::trade_def::ExchangeEngine, level_info::OrderBookLevelInfo, order::Order,
-    order_modify::OrderModify, orderbook::OrderBook, snowflake_id::SnowFlakeGenerator,
-    trade::Trades, trading_pair::TradingPair, types::OrderId, wal::engine::WalEngine,
+    engine::trade_def::{ExchangeEngine, UsersEngine},
+    level_info::OrderBookLevelInfo,
+    order::Order,
+    order_modify::OrderModify,
+    orderbook::OrderBook,
+    snowflake_id::SnowFlakeGenerator,
+    trade::Trades,
+    trading_pair::TradingPair,
+    types::{Asset, OrderId, Quantity, UserId},
+    user::User,
+    wal::engine::WalEngine,
 };
 
 pub struct CoreEngine {
     orderbooks: HashMap<TradingPair, OrderBook>,
+    users: HashMap<UserId, User>,
     generator: SnowFlakeGenerator,
 }
 
@@ -17,6 +26,7 @@ impl CoreEngine {
     pub fn new(machine_id: u64, datacenter_id: u64) -> Self {
         CoreEngine {
             orderbooks: HashMap::new(),
+            users: HashMap::new(),
             generator: SnowFlakeGenerator::new(machine_id, datacenter_id),
         }
     }
@@ -64,6 +74,56 @@ impl ExchangeEngine for CoreEngine {
 
     fn size(&self, pair: &TradingPair) -> Option<usize> {
         self.orderbooks.get(pair).map(|book| book.size())
+    }
+}
+
+impl UsersEngine for CoreEngine {
+    fn add_user(&mut self, user_id: UserId) {
+        self.users
+            .entry(user_id)
+            .or_insert(User::new(Some(user_id)));
+    }
+
+    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, String> {
+        // cancel all orders for this user across all orderbooks
+        for book in self.orderbooks.values_mut() {
+            let cancelled_ids = book.cancel_orders_for_user(user_id);
+            // unlock each cancelled order's locked funds
+            if let Some(user) = self.users.get_mut(&user_id) {
+                for order_id in cancelled_ids {
+                    let _ = user.unlock_order(&order_id);
+                }
+            }
+        }
+        // Remove user and return final balances snapshots
+        let user = self.users.remove(&user_id).ok_or("User not found")?;
+        Ok(user.get_all_balances().clone())
+    }
+
+    fn deposit_balance(
+        &mut self,
+        user_id: UserId,
+        asset: Asset,
+        quantity: Quantity,
+    ) -> Result<(), String> {
+        let user = self.users.get_mut(&user_id).ok_or("User not found")?;
+        user.add_balance(asset, quantity);
+        Ok(())
+    }
+
+    fn withdraw_balance(
+        &mut self,
+        user_id: UserId,
+        asset: Asset,
+        quantity: Quantity,
+    ) -> Result<(), String> {
+        let user = self.users.get_mut(&user_id).ok_or("User not found")?;
+        user.substract_balance(asset, quantity)
+    }
+
+    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String> {
+        let user = self.users.get(&user_id).ok_or("User not found")?;
+        Ok(user.get_available_balance(&asset))
     }
 }
 
@@ -132,13 +192,63 @@ impl ExchangeEngine for EngineWrapper {
     }
 }
 
-pub fn engine_from_env(machine_id: u64 , datacenter_id: u64) -> EngineWrapper {
+impl UsersEngine for EngineWrapper {
+    fn add_user(&mut self, user_id: UserId) {
+        match self {
+            EngineWrapper::Core(e) => e.add_user(user_id),
+            EngineWrapper::Wal(e) => e.add_user(user_id),
+        }
+    }
+
+    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, String> {
+        match self {
+            EngineWrapper::Core(e) => e.remove_user(user_id),
+            EngineWrapper::Wal(e) => e.remove_user(user_id),
+        }
+    }
+
+    fn deposit_balance(
+        &mut self,
+        user_id: UserId,
+        asset: Asset,
+        quantity: Quantity,
+    ) -> Result<(), String> {
+        match self {
+            EngineWrapper::Core(e) => e.deposit_balance(user_id, asset, quantity),
+            EngineWrapper::Wal(e) => e.deposit_balance(user_id, asset, quantity),
+        }
+    }
+
+    fn withdraw_balance(
+        &mut self,
+        user_id: UserId,
+        asset: Asset,
+        quantity: Quantity,
+    ) -> Result<(), String> {
+        match self {
+            EngineWrapper::Core(e) => e.withdraw_balance(user_id, asset, quantity),
+            EngineWrapper::Wal(e) => e.withdraw_balance(user_id, asset, quantity),
+        }
+    }
+
+    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String> {
+        match self {
+            EngineWrapper::Core(e) => e.get_balance(user_id, asset),
+            EngineWrapper::Wal(e) => e.get_balance(user_id, asset),
+        }
+    }
+}
+
+pub fn engine_from_env(machine_id: u64, datacenter_id: u64) -> EngineWrapper {
     let wal_enabled = std::env::var("WAL_ENABLED")
         .map(|v| v == "true")
         .unwrap_or(false);
     if wal_enabled {
         let path = std::env::var("WAL_PATH").unwrap_or_else(|_| "engine.wal".into());
-        EngineWrapper::Wal(WalEngine::new(machine_id, datacenter_id, &path).expect("Failed to initialize WAL engine"))
+        EngineWrapper::Wal(
+            WalEngine::new(machine_id, datacenter_id, &path)
+                .expect("Failed to initialize WAL engine"),
+        )
     } else {
         EngineWrapper::Core(CoreEngine::new(1, 1))
     }
