@@ -111,7 +111,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     user_id,
                 );
                 let trades = engine.add_order(&pair, &order); // main engine execution
-                let _  = reply.send(trades.map(|t| (order_id, t))); // sending back through rpc
+                let _ = reply.send(trades.map(|t| (order_id, t))); // sending back through rpc
             }
             EngineCommand::CancelOrder {
                 pair,
@@ -119,7 +119,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 let sucess = engine.cancel_order(&pair, &order_id);
-                let _  = reply.send(sucess);
+                let _ = reply.send(sucess);
             }
             EngineCommand::ModifyOrder {
                 pair,
@@ -144,7 +144,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
             }
             EngineCommand::RemoveUser { user_id, reply } => {
                 let result = engine.remove_user(user_id);
-                let _  = reply.send(result);
+                let _ = reply.send(result);
             }
             EngineCommand::DepositBalance {
                 user_id,
@@ -153,7 +153,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 let result = engine.deposit_balance(user_id, asset, quantity);
-                let _  = reply.send(result);
+                let _ = reply.send(result);
             }
             EngineCommand::WithdrawBalance {
                 user_id,

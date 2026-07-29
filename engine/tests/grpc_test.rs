@@ -9,8 +9,7 @@ use vertex_engine::{
         self, EngineService,
         proto::{
             self, engine_services_client::EngineServicesClient,
-            engine_services_server::EngineServicesServer,
-            user_serivces_client::UserSerivcesClient,
+            engine_services_server::EngineServicesServer, user_serivces_client::UserSerivcesClient,
             user_serivces_server::UserSerivcesServer,
         },
     },
@@ -34,14 +33,12 @@ async fn setup() -> (UserSerivcesClient<Channel>, EngineServicesClient<Channel>)
             .unwrap();
     });
 
-    let user_client =
-        UserSerivcesClient::connect(format!("http://127.0.0.1:{}", port))
-            .await
-            .unwrap();
-    let engine_client =
-        EngineServicesClient::connect(format!("http://127.0.0.1:{}", port))
-            .await
-            .unwrap();
+    let user_client = UserSerivcesClient::connect(format!("http://127.0.0.1:{}", port))
+        .await
+        .unwrap();
+    let engine_client = EngineServicesClient::connect(format!("http://127.0.0.1:{}", port))
+        .await
+        .unwrap();
 
     (user_client, engine_client)
 }

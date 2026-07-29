@@ -1,14 +1,18 @@
 use tokio::{signal, sync::mpsc};
 use tonic::transport::Server;
 use vertex_engine::{
-    engine::engine_from_env, grpc::{
-        self, EngineService, proto::{engine_services_server::EngineServicesServer, user_serivces_server::UserSerivcesServer},
+    engine::engine_from_env,
+    grpc::{
+        self, EngineService,
+        proto::{
+            engine_services_server::EngineServicesServer, user_serivces_server::UserSerivcesServer,
+        },
     },
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let engine = engine_from_env(1,1);
+    let engine = engine_from_env(1, 1);
     let (tx, rx) = mpsc::channel(100);
     tokio::spawn(grpc::run_engine(rx, engine));
     let service = EngineService::new(tx);
