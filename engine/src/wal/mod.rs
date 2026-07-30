@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use tracing;
 
 use crate::types::WalEntryType;
 
@@ -121,13 +122,13 @@ impl Iterator for WalReader {
                         Ok(entry) => return Some(entry),
                         Err(e) => {
                             // skip malformed lines
-                            eprintln!("WAL: skipping malformed entry: {e}");
+                            tracing::warn!("WAL: skipping malformed entry: {e}");
                             continue;
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("WAL: read error: {e}");
+                    tracing::error!("WAL: read error: {e}");
                     return None;
                 }
             }

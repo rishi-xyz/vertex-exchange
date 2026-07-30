@@ -1,6 +1,7 @@
 pub mod trade_def;
 
 use std::collections::HashMap;
+use tracing;
 
 use crate::{
     engine::trade_def::{ExchangeEngine, UsersEngine},
@@ -39,20 +40,24 @@ impl CoreEngine {
 impl ExchangeEngine for CoreEngine {
     // create orderbook
     fn add_trading_pair(&mut self, pair: TradingPair) {
+        tracing::debug!(%pair, "add_trading_pair");
         self.orderbooks.entry(pair).or_insert(OrderBook::new());
     }
 
     fn remove_trading_pair(&mut self, pair: &TradingPair) -> Option<OrderBook> {
+        tracing::debug!(%pair, "remove_trading_pair");
         self.orderbooks.remove(pair)
     }
 
     fn add_order(&mut self, pair: &TradingPair, order: &Order) -> Option<Trades> {
+        tracing::debug!(%pair, order_id = order.get_order_id(), price = order.get_price(), quantity = order.get_remaining_quantity(), side = ?order.get_side(), "add_order");
         self.orderbooks
             .get_mut(pair)?
             .add_order(order, &mut self.generator)
     }
 
     fn cancel_order(&mut self, pair: &TradingPair, order_id: &OrderId) -> bool {
+        tracing::debug!(%pair, order_id, "cancel_order");
         if let Some(book) = self.orderbooks.get_mut(pair) {
             book.cancel_order(order_id);
             return true;
@@ -61,6 +66,7 @@ impl ExchangeEngine for CoreEngine {
     }
 
     fn modify_order(&mut self, pair: &TradingPair, modify_order: OrderModify) -> Option<Trades> {
+        tracing::debug!(%pair, order_id = modify_order.get_order_id(), "modify_order");
         self.orderbooks
             .get_mut(pair)?
             .modify_order(modify_order, &mut self.generator)
@@ -79,12 +85,14 @@ impl ExchangeEngine for CoreEngine {
 
 impl UsersEngine for CoreEngine {
     fn add_user(&mut self, user_id: UserId) {
+        tracing::debug!(%user_id, "add_user");
         self.users
             .entry(user_id)
             .or_insert(User::new(Some(user_id)));
     }
 
     fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, String> {
+        tracing::debug!(%user_id, "remove_user");
         // cancel all orders for this user across all orderbooks
         for book in self.orderbooks.values_mut() {
             let cancelled_ids = book.cancel_orders_for_user(user_id);
@@ -106,6 +114,7 @@ impl UsersEngine for CoreEngine {
         asset: Asset,
         quantity: Quantity,
     ) -> Result<(), String> {
+        tracing::debug!(%user_id, ?asset, quantity, "deposit_balance");
         let user = self.users.get_mut(&user_id).ok_or("User not found")?;
         user.add_balance(asset, quantity);
         Ok(())
@@ -117,6 +126,7 @@ impl UsersEngine for CoreEngine {
         asset: Asset,
         quantity: Quantity,
     ) -> Result<(), String> {
+        tracing::debug!(%user_id, ?asset, quantity, "withdraw_balance");
         let user = self.users.get_mut(&user_id).ok_or("User not found")?;
         user.substract_balance(asset, quantity)
     }

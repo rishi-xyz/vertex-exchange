@@ -22,6 +22,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use tracing;
 
 use crate::types::{OrderId, OrderStatus, OrderType, Price, Quantity, Side, UserId};
 
@@ -210,7 +211,12 @@ impl Order {
     /// ```
     pub fn fills(&mut self, quantity: Quantity) -> Result<(), String> {
         if quantity > self.remaining_quantity {
-            // tracing warn
+            tracing::warn!(
+                order_id = self.get_order_id(),
+                remaining = self.remaining_quantity,
+                filled = quantity,
+                "Order cannot be filled for more than its remaining quantity"
+            );
             return Err(format!(
                 "Order {} cannot be filled for more than its remaining quantity",
                 self.get_order_id()
@@ -222,7 +228,12 @@ impl Order {
         } else {
             self.status = OrderStatus::PartiallyFilled;
         };
-        // tracing debug
+        tracing::debug!(
+            order_id = self.get_order_id(),
+            remaining = self.remaining_quantity,
+            status = ?self.status,
+            "order filled"
+        );
         Ok(())
     }
 }

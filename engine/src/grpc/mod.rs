@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use tokio::sync::{mpsc, oneshot};
 use tonic::{Request, Response, Status};
+use tracing;
 use uuid::Uuid;
 
 use crate::{
@@ -100,6 +101,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 user_id,
                 reply,
             } => {
+                tracing::debug!(%pair, ?side, ?order_type, price, quantity, %user_id, "submit_order");
                 let order_id = engine.next_id();
                 let order = Order::new(
                     order_id,
@@ -111,6 +113,8 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     user_id,
                 );
                 let trades = engine.add_order(&pair, &order); // main engine execution
+                let has_trades = trades.is_some();
+                tracing::debug!(order_id, has_trades, "submit_order complete");
                 let _ = reply.send(trades.map(|t| (order_id, t))); // sending back through rpc
             }
             EngineCommand::CancelOrder {
@@ -118,7 +122,9 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 order_id,
                 reply,
             } => {
+                tracing::debug!(%pair, order_id, "cancel_order");
                 let sucess = engine.cancel_order(&pair, &order_id);
+                tracing::debug!(order_id, sucess, "cancel_order complete");
                 let _ = reply.send(sucess);
             }
             EngineCommand::ModifyOrder {
@@ -126,23 +132,28 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 modify,
                 reply,
             } => {
+                tracing::debug!(%pair, "modify_order");
                 let trades = engine.modify_order(&pair, modify);
                 let _ = reply.send(trades);
             }
             EngineCommand::GetOrderBook { pair, reply } => {
+                tracing::debug!(%pair, "get_order_book");
                 let info = engine.get_order_info(&pair);
                 let _ = reply.send(info);
             }
             EngineCommand::AddTradingPair { pair, reply } => {
+                tracing::info!(%pair, "add_trading_pair");
                 engine.add_trading_pair(pair);
                 let _ = reply.send(());
             }
             EngineCommand::AddUser { reply } => {
                 let user_id = Uuid::new_v4();
+                tracing::info!(%user_id, "add_user");
                 engine.add_user(user_id);
                 let _ = reply.send(user_id);
             }
             EngineCommand::RemoveUser { user_id, reply } => {
+                tracing::info!(%user_id, "remove_user");
                 let result = engine.remove_user(user_id);
                 let _ = reply.send(result);
             }
@@ -152,6 +163,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 quantity,
                 reply,
             } => {
+                tracing::info!(%user_id, ?asset, quantity, "deposit_balance");
                 let result = engine.deposit_balance(user_id, asset, quantity);
                 let _ = reply.send(result);
             }
@@ -161,6 +173,7 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 quantity,
                 reply,
             } => {
+                tracing::info!(%user_id, ?asset, quantity, "withdraw_balance");
                 let result = engine.withdraw_balance(user_id, asset, quantity);
                 let _ = reply.send(result);
             }
