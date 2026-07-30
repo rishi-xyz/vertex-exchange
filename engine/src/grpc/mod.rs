@@ -90,7 +90,6 @@ impl EngineService {
 
 pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: EngineWrapper) {
     while let Some(cmd) = rx.recv().await {
-        // process commands sequentially
         match cmd {
             EngineCommand::SubmitOrder {
                 pair,
@@ -102,20 +101,30 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 tracing::debug!(%pair, ?side, ?order_type, price, quantity, %user_id, "submit_order");
-                let order_id = engine.next_id();
-                let order = Order::new(
-                    order_id,
-                    order_type,
-                    side,
-                    OrderStatus::Empty,
-                    price,
-                    quantity,
-                    user_id,
-                );
-                let trades = engine.add_order(&pair, &order); // main engine execution
-                let has_trades = trades.is_some();
-                tracing::debug!(order_id, has_trades, "submit_order complete");
-                let _ = reply.send(trades.map(|t| (order_id, t))); // sending back through rpc
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let order_id = engine.next_id();
+                    let order = Order::new(
+                        order_id,
+                        order_type,
+                        side,
+                        OrderStatus::Empty,
+                        price,
+                        quantity,
+                        user_id,
+                    );
+                    let trades = engine.add_order(&pair, &order);
+                    (order_id, trades)
+                }));
+                match result {
+                    Ok((order_id, trades)) => {
+                        tracing::debug!(order_id, has_trades = trades.is_some(), "submit_order complete");
+                        let _ = reply.send(trades.map(|t| (order_id, t)));
+                    }
+                    Err(e) => {
+                        tracing::error!("submit_order panic: {:?}", e);
+                        let _ = reply.send(None);
+                    }
+                }
             }
             EngineCommand::CancelOrder {
                 pair,
@@ -123,9 +132,19 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 tracing::debug!(%pair, order_id, "cancel_order");
-                let sucess = engine.cancel_order(&pair, &order_id);
-                tracing::debug!(order_id, sucess, "cancel_order complete");
-                let _ = reply.send(sucess);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.cancel_order(&pair, &order_id)
+                }));
+                match result {
+                    Ok(success) => {
+                        tracing::debug!(order_id, success, "cancel_order complete");
+                        let _ = reply.send(success);
+                    }
+                    Err(e) => {
+                        tracing::error!("cancel_order panic: {:?}", e);
+                        let _ = reply.send(false);
+                    }
+                }
             }
             EngineCommand::ModifyOrder {
                 pair,
@@ -133,29 +152,72 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 tracing::debug!(%pair, "modify_order");
-                let trades = engine.modify_order(&pair, modify);
-                let _ = reply.send(trades);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.modify_order(&pair, modify)
+                }));
+                match result {
+                    Ok(trades) => { let _ = reply.send(trades); }
+                    Err(e) => {
+                        tracing::error!("modify_order panic: {:?}", e);
+                        let _ = reply.send(None);
+                    }
+                }
             }
             EngineCommand::GetOrderBook { pair, reply } => {
                 tracing::debug!(%pair, "get_order_book");
-                let info = engine.get_order_info(&pair);
-                let _ = reply.send(info);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.get_order_info(&pair)
+                }));
+                match result {
+                    Ok(info) => { let _ = reply.send(info); }
+                    Err(e) => {
+                        tracing::error!("get_order_book panic: {:?}", e);
+                        let _ = reply.send(None);
+                    }
+                }
             }
             EngineCommand::AddTradingPair { pair, reply } => {
                 tracing::info!(%pair, "add_trading_pair");
-                engine.add_trading_pair(pair);
-                let _ = reply.send(());
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.add_trading_pair(pair)
+                }));
+                match result {
+                    Ok(_) => { let _ = reply.send(()); }
+                    Err(e) => {
+                        tracing::error!("add_trading_pair panic: {:?}", e);
+                        let _ = reply.send(());
+                    }
+                }
             }
             EngineCommand::AddUser { reply } => {
-                let user_id = Uuid::new_v4();
-                tracing::info!(%user_id, "add_user");
-                engine.add_user(user_id);
-                let _ = reply.send(user_id);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let user_id = Uuid::new_v4();
+                    engine.add_user(user_id);
+                    user_id
+                }));
+                match result {
+                    Ok(user_id) => {
+                        tracing::info!(%user_id, "add_user");
+                        let _ = reply.send(user_id);
+                    }
+                    Err(e) => {
+                        tracing::error!("add_user panic: {:?}", e);
+                        let _ = reply.send(Uuid::nil());
+                    }
+                }
             }
             EngineCommand::RemoveUser { user_id, reply } => {
                 tracing::info!(%user_id, "remove_user");
-                let result = engine.remove_user(user_id);
-                let _ = reply.send(result);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.remove_user(user_id)
+                }));
+                match result {
+                    Ok(r) => { let _ = reply.send(r); }
+                    Err(e) => {
+                        tracing::error!("remove_user panic: {:?}", e);
+                        let _ = reply.send(Err("Internal engine error".into()));
+                    }
+                }
             }
             EngineCommand::DepositBalance {
                 user_id,
@@ -164,8 +226,16 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 tracing::info!(%user_id, ?asset, quantity, "deposit_balance");
-                let result = engine.deposit_balance(user_id, asset, quantity);
-                let _ = reply.send(result);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.deposit_balance(user_id, asset, quantity)
+                }));
+                match result {
+                    Ok(r) => { let _ = reply.send(r); }
+                    Err(e) => {
+                        tracing::error!("deposit_balance panic: {:?}", e);
+                        let _ = reply.send(Err("Internal engine error".into()));
+                    }
+                }
             }
             EngineCommand::WithdrawBalance {
                 user_id,
@@ -174,8 +244,16 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 reply,
             } => {
                 tracing::info!(%user_id, ?asset, quantity, "withdraw_balance");
-                let result = engine.withdraw_balance(user_id, asset, quantity);
-                let _ = reply.send(result);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.withdraw_balance(user_id, asset, quantity)
+                }));
+                match result {
+                    Ok(r) => { let _ = reply.send(r); }
+                    Err(e) => {
+                        tracing::error!("withdraw_balance panic: {:?}", e);
+                        let _ = reply.send(Err("Internal engine error".into()));
+                    }
+                }
             }
         }
     }
