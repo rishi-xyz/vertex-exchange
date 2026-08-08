@@ -13,12 +13,14 @@ use vertex_engine::{
             user_serivces_server::UserSerivcesServer,
         },
     },
+    redis::FillPublisher,
 };
 
 async fn setup() -> (UserSerivcesClient<Channel>, EngineServicesClient<Channel>) {
     let engine = EngineWrapper::Core(CoreEngine::new(1, 1));
     let (tx, rx) = mpsc::channel(256);
-    tokio::spawn(grpc::run_engine(rx, engine));
+    let publisher = FillPublisher::new().await;
+    tokio::spawn(grpc::run_engine(rx, engine, publisher));
     let service = EngineService::new(tx);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -9,6 +9,7 @@ use vertex_engine::{
             engine_services_server::EngineServicesServer, user_serivces_server::UserSerivcesServer,
         },
     },
+    redis::FillPublisher,
 };
 
 #[tokio::main]
@@ -16,12 +17,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,engine=debug"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
-
     tracing::info!("Starting Vertex Engine");
-
     let engine = engine_from_env(1, 1);
+    let publisher = FillPublisher::new().await;
     let (tx, rx) = mpsc::channel(100);
-    tokio::spawn(grpc::run_engine(rx, engine));
+    tokio::spawn(grpc::run_engine(rx, engine, publisher));
     let service = EngineService::new(tx);
     let port = std::env::var("PORT").unwrap_or_else(|_| ("5000").into());
     let address = format!("0.0.0.0:{}", port).parse()?;

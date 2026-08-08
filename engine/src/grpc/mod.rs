@@ -21,6 +21,7 @@ use crate::{
     level_info::OrderBookLevelInfo,
     order::Order,
     order_modify::OrderModify,
+    redis::FillPublisher,
     trade::{self, Trades},
     trading_pair::TradingPair,
     types::{Asset, OrderId, OrderStatus, OrderType, Price, Quantity, Side},
@@ -88,7 +89,11 @@ impl EngineService {
     }
 }
 
-pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: EngineWrapper) {
+pub async fn run_engine(
+    mut rx: mpsc::Receiver<EngineCommand>,
+    mut engine: EngineWrapper,
+    publisher: FillPublisher,
+) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             EngineCommand::SubmitOrder {
@@ -117,7 +122,14 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                 }));
                 match result {
                     Ok((order_id, trades)) => {
-                        tracing::debug!(order_id, has_trades = trades.is_some(), "submit_order complete");
+                        tracing::debug!(
+                            order_id,
+                            has_trades = trades.is_some(),
+                            "submit_order complete"
+                        );
+                        if let Some(ref trades) = trades {
+                            publisher.publish_fills(&pair, trades).await;
+                        }
                         let _ = reply.send(trades.map(|t| (order_id, t)));
                     }
                     Err(e) => {
@@ -156,7 +168,12 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     engine.modify_order(&pair, modify)
                 }));
                 match result {
-                    Ok(trades) => { let _ = reply.send(trades); }
+                    Ok(trades) => {
+                        if let Some(ref trades) = trades {
+                            publisher.publish_fills(&pair, trades).await;
+                        }
+                        let _ = reply.send(trades);
+                    }
                     Err(e) => {
                         tracing::error!("modify_order panic: {:?}", e);
                         let _ = reply.send(None);
@@ -169,7 +186,9 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     engine.get_order_info(&pair)
                 }));
                 match result {
-                    Ok(info) => { let _ = reply.send(info); }
+                    Ok(info) => {
+                        let _ = reply.send(info);
+                    }
                     Err(e) => {
                         tracing::error!("get_order_book panic: {:?}", e);
                         let _ = reply.send(None);
@@ -182,7 +201,9 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     engine.add_trading_pair(pair)
                 }));
                 match result {
-                    Ok(_) => { let _ = reply.send(()); }
+                    Ok(_) => {
+                        let _ = reply.send(());
+                    }
                     Err(e) => {
                         tracing::error!("add_trading_pair panic: {:?}", e);
                         let _ = reply.send(());
@@ -212,7 +233,9 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     engine.remove_user(user_id)
                 }));
                 match result {
-                    Ok(r) => { let _ = reply.send(r); }
+                    Ok(r) => {
+                        let _ = reply.send(r);
+                    }
                     Err(e) => {
                         tracing::error!("remove_user panic: {:?}", e);
                         let _ = reply.send(Err("Internal engine error".into()));
@@ -230,7 +253,9 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     engine.deposit_balance(user_id, asset, quantity)
                 }));
                 match result {
-                    Ok(r) => { let _ = reply.send(r); }
+                    Ok(r) => {
+                        let _ = reply.send(r);
+                    }
                     Err(e) => {
                         tracing::error!("deposit_balance panic: {:?}", e);
                         let _ = reply.send(Err("Internal engine error".into()));
@@ -248,7 +273,9 @@ pub async fn run_engine(mut rx: mpsc::Receiver<EngineCommand>, mut engine: Engin
                     engine.withdraw_balance(user_id, asset, quantity)
                 }));
                 match result {
-                    Ok(r) => { let _ = reply.send(r); }
+                    Ok(r) => {
+                        let _ = reply.send(r);
+                    }
                     Err(e) => {
                         tracing::error!("withdraw_balance panic: {:?}", e);
                         let _ = reply.send(Err("Internal engine error".into()));
