@@ -34,6 +34,20 @@ pub type OrderId = u64;
 /// and time-sortability across distributed engine instances.
 pub type TradeId = u64;
 
+/// Errors that can occur when placing or modifying an order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderError {
+    /// The trading pair has no orderbook in the engine.
+    NoSuchPair,
+    /// The order references a user that does not exist in the engine.
+    NoSuchUser,
+    /// The user does not have enough available balance to cover the order.
+    InsufficientBalance,
+    /// The order itself is invalid (non-positive price/quantity, notional overflow,
+    /// duplicate order id, or unsupported side/user change on modify).
+    InvalidOrder,
+}
+
 /// Determines how long an order lives and how it interacts with the book.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OrderType {
