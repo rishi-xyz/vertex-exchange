@@ -116,7 +116,13 @@ impl ExchangeEngine for CoreEngine {
 
     fn remove_trading_pair(&mut self, pair: &TradingPair) -> Option<OrderBook> {
         tracing::debug!(%pair, "remove_trading_pair");
-        self.orderbooks.remove(pair)
+        let book = self.orderbooks.remove(pair)?;
+        for order in book.get_all_orders() {
+            if let Some(user) = self.users.get_mut(&order.get_user_id()) {
+                let _ = user.unlock_order(&order.get_order_id());
+            }
+        }
+        Some(book)
     }
 
     fn add_order(

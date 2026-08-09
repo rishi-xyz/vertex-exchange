@@ -579,6 +579,11 @@ impl OrderBook {
         self.orders_map.get(order_id).copied()
     }
 
+    /// Returns copies of all resting orders in the book.
+    pub fn get_all_orders(&self) -> Vec<Order> {
+        self.orders_map.values().copied().collect()
+    }
+
     /// Returns the order type for the given order ID, if it exists.
     pub fn get_order_type(&self, order_id: &OrderId) -> Option<OrderType> {
         self.orders_map.get(order_id).map(|o| o.get_type())

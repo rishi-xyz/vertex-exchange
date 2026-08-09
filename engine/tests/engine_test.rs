@@ -64,6 +64,22 @@ fn remove_nonexistent_returns_none() {
 }
 
 #[test]
+fn remove_trading_pair_unlocks_resting_orders() {
+    let mut engine = new_engine();
+    engine.add_trading_pair(eth_usdc());
+    let uid = add_funded_user(&mut engine);
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
+    let _ = engine.add_order(&eth_usdc(), &order);
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(2_000_000 - 500000));
+    assert_eq!(engine.get_total_balance(uid, Asset::USDC), Ok(2_000_000));
+    let removed = engine.remove_trading_pair(&eth_usdc());
+    assert!(removed.is_some());
+    assert!(engine.size(&eth_usdc()).is_none());
+    assert_eq!(engine.get_balance(uid, Asset::USDC), Ok(2_000_000));
+    assert_eq!(engine.get_total_balance(uid, Asset::USDC), Ok(2_000_000));
+}
+
+#[test]
 fn add_order_nonexistent_pair_errs() {
     let mut engine = new_engine();
     let order = make_order(
