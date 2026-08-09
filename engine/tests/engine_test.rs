@@ -3,7 +3,7 @@ mod helpers;
 use vertex_engine::engine::CoreEngine;
 use vertex_engine::engine::trade_def::{ExchangeEngine, UsersEngine};
 use vertex_engine::trading_pair::TradingPair;
-use vertex_engine::types::{Asset, OrderType, Side};
+use vertex_engine::types::{Asset, OrderType, Side, UserId};
 
 use helpers::{make_modify, make_order, make_pair, make_user_id};
 
@@ -17,6 +17,14 @@ fn eth_usdc() -> TradingPair {
 
 fn btc_usdc() -> TradingPair {
     make_pair(Asset::BTC, Asset::USDC)
+}
+
+fn add_funded_user(engine: &mut CoreEngine) -> UserId {
+    let uid = make_user_id();
+    engine.add_user(uid);
+    engine.deposit_balance(uid, Asset::USDC, 2_000_000).unwrap();
+    engine.deposit_balance(uid, Asset::ETH, 100).unwrap();
+    uid
 }
 
 #[test]
@@ -56,7 +64,7 @@ fn remove_nonexistent_returns_none() {
 }
 
 #[test]
-fn add_order_nonexistent_pair_returns_none() {
+fn add_order_nonexistent_pair_errs() {
     let mut engine = new_engine();
     let order = make_order(
         OrderType::GoodTillCancel,
@@ -66,23 +74,24 @@ fn add_order_nonexistent_pair_returns_none() {
         make_user_id(),
     );
     let result = engine.add_order(&eth_usdc(), &order);
-    assert!(result.is_none());
+    assert!(result.is_err());
 }
 
 #[test]
 fn add_order_existing_pair_delegates() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
+    let uid = add_funded_user(&mut engine);
 
     let order = make_order(
         OrderType::GoodTillCancel,
         Side::Buy,
         50000,
         10,
-        make_user_id(),
+        uid,
     );
     let result = engine.add_order(&eth_usdc(), &order);
-    assert!(result.is_some());
+    assert!(matches!(result, Ok(Some(_))));
     assert_eq!(engine.size(&eth_usdc()), Some(1));
 }
 
@@ -90,15 +99,16 @@ fn add_order_existing_pair_delegates() {
 fn cancel_order_existing_pair_returns_true() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
+    let uid = add_funded_user(&mut engine);
 
     let order = make_order(
         OrderType::GoodTillCancel,
         Side::Buy,
         50000,
         10,
-        make_user_id(),
+        uid,
     );
-    engine.add_order(&eth_usdc(), &order);
+    let _ = engine.add_order(&eth_usdc(), &order);
     let result = engine.cancel_order(&eth_usdc(), &order.get_order_id());
     assert!(result);
     assert_eq!(engine.size(&eth_usdc()), Some(0));
@@ -112,20 +122,19 @@ fn cancel_order_nonexistent_pair_returns_false() {
 }
 
 #[test]
-fn cancel_nonexistent_order_on_existing_pair_returns_true() {
-    // Documents the cancel_order bug: returns true if pair exists, regardless of order
+fn cancel_nonexistent_order_on_existing_pair_returns_false() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
     let result = engine.cancel_order(&eth_usdc(), &999);
-    assert!(result);
+    assert!(!result);
 }
 
 #[test]
-fn modify_order_nonexistent_pair_returns_none() {
+fn modify_order_nonexistent_pair_errs() {
     let mut engine = new_engine();
     let modify = make_modify(42, 50000, Side::Buy, 10, make_user_id());
     let result = engine.modify_order(&eth_usdc(), modify);
-    assert!(result.is_none());
+    assert!(result.is_err());
 }
 
 #[test]
@@ -146,13 +155,12 @@ fn multiple_pairs_isolated_books() {
     engine.add_trading_pair(eth_usdc());
     engine.add_trading_pair(btc_usdc());
 
-    let uid = make_user_id();
+    let uid = add_funded_user(&mut engine);
     let eth_order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
     let btc_order = make_order(OrderType::GoodTillCancel, Side::Buy, 100000, 5, uid);
 
-    engine.add_order(&eth_usdc(), &eth_order);
-    engine.add_order(&btc_usdc(), &btc_order);
-
+    let _ = engine.add_order(&eth_usdc(), &eth_order);
+    let _ = engine.add_order(&btc_usdc(), &btc_order);
     assert_eq!(engine.size(&eth_usdc()), Some(1));
     assert_eq!(engine.size(&btc_usdc()), Some(1));
 
@@ -166,13 +174,13 @@ fn order_ids_are_unique() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
 
-    let uid = make_user_id();
+    let uid = add_funded_user(&mut engine);
     let o1 = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
-    engine.add_order(&eth_usdc(), &o1);
+    let _ = engine.add_order(&eth_usdc(), &o1);
     let id1 = o1.get_order_id();
 
     let o2 = make_order(OrderType::GoodTillCancel, Side::Buy, 51000, 10, uid);
-    engine.add_order(&eth_usdc(), &o2);
+    let _ = engine.add_order(&eth_usdc(), &o2);
     let id2 = o2.get_order_id();
 
     assert_ne!(id1, id2);
@@ -183,12 +191,12 @@ fn full_lifecycle_add_add_cancel_check_size() {
     let mut engine = new_engine();
     engine.add_trading_pair(eth_usdc());
 
-    let uid = make_user_id();
+    let uid = add_funded_user(&mut engine);
     let o1 = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
     let o2 = make_order(OrderType::GoodTillCancel, Side::Buy, 51000, 20, uid);
 
-    engine.add_order(&eth_usdc(), &o1);
-    engine.add_order(&eth_usdc(), &o2);
+    let _ = engine.add_order(&eth_usdc(), &o1);
+    let _ = engine.add_order(&eth_usdc(), &o2);
     assert_eq!(engine.size(&eth_usdc()), Some(2));
 
     engine.cancel_order(&eth_usdc(), &o1.get_order_id());
@@ -297,12 +305,12 @@ fn remove_user_cancels_orders_and_returns_balances() {
     engine.add_trading_pair(eth_usdc());
     let uid = make_user_id();
     engine.add_user(uid);
-    engine.deposit_balance(uid, Asset::USDC, 50000).unwrap();
+    engine.deposit_balance(uid, Asset::USDC, 500000).unwrap();
     let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
-    engine.add_order(&eth_usdc(), &order);
+    let _ = engine.add_order(&eth_usdc(), &order);
     assert_eq!(engine.size(&eth_usdc()), Some(1));
     let balances = engine.remove_user(uid).unwrap();
-    assert_eq!(balances.get(&Asset::USDC), Some(&50000));
+    assert_eq!(balances.get(&Asset::USDC), Some(&500000));
     assert_eq!(engine.size(&eth_usdc()), Some(0));
 }
 
