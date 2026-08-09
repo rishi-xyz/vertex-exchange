@@ -124,13 +124,21 @@ pub async fn run_engine(
                     Ok((order_id, trades)) => {
                         tracing::debug!(
                             order_id,
-                            has_trades = trades.is_some(),
+                            has_trades = matches!(trades, Ok(Some(_))),
                             "submit_order complete"
                         );
-                        if let Some(ref trades) = trades {
-                            publisher.publish_fills(&pair, trades).await;
+                        match trades {
+                            Ok(trades) => {
+                                if let Some(ref trades) = trades {
+                                    publisher.publish_fills(&pair, trades).await;
+                                }
+                                let _ = reply.send(trades.map(|t| (order_id, t)));
+                            }
+                            Err(e) => {
+                                tracing::warn!(%pair, order_id, error = ?e, "submit_order rejected");
+                                let _ = reply.send(None);
+                            }
                         }
-                        let _ = reply.send(trades.map(|t| (order_id, t)));
                     }
                     Err(e) => {
                         tracing::error!("submit_order panic: {:?}", e);
@@ -169,10 +177,19 @@ pub async fn run_engine(
                 }));
                 match result {
                     Ok(trades) => {
-                        if let Some(ref trades) = trades {
-                            publisher.publish_fills(&pair, trades).await;
+                        tracing::debug!(%pair, "modify_order complete");
+                        match trades {
+                            Ok(trades) => {
+                                if let Some(ref trades) = trades {
+                                    publisher.publish_fills(&pair, trades).await;
+                                }
+                                let _ = reply.send(trades);
+                            }
+                            Err(e) => {
+                                tracing::warn!(%pair, error = ?e, "modify_order rejected");
+                                let _ = reply.send(None);
+                            }
                         }
-                        let _ = reply.send(trades);
                     }
                     Err(e) => {
                         tracing::error!("modify_order panic: {:?}", e);
