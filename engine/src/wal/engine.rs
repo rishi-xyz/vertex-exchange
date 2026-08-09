@@ -5,7 +5,7 @@ use crate::{
         CoreEngine,
         trade_def::{ExchangeEngine, UsersEngine},
     },
-    types::{Asset, OrderId, Quantity, WalEntryType},
+    types::{Asset, OrderError, OrderId, Quantity, WalEntryType},
     wal::{WalEntry, WalReader, WalWriter},
 };
 
@@ -67,7 +67,7 @@ impl WalEngine {
                 order,
                 trades: _,
             } => {
-                engine.add_order(pair, order);
+                let _ = engine.add_order(pair, order);
             }
             WalEntryType::CancelOrder {
                 pair,
@@ -81,7 +81,7 @@ impl WalEngine {
                 modify,
                 trades: _,
             } => {
-                engine.modify_order(pair, modify.clone());
+                let _ = engine.modify_order(pair, modify.clone());
             }
             WalEntryType::AddUser { user_id } => {
                 engine.add_user(*user_id);
@@ -127,7 +127,7 @@ impl ExchangeEngine for WalEngine {
         &mut self,
         pair: &crate::trading_pair::TradingPair,
         order: &crate::order::Order,
-    ) -> Option<crate::trade::Trades> {
+    ) -> Result<Option<crate::trade::Trades>, OrderError> {
         let entry = WalEntry::new(
             0,
             WalEntryType::AddOrder {
@@ -161,7 +161,7 @@ impl ExchangeEngine for WalEngine {
         &mut self,
         pair: &crate::trading_pair::TradingPair,
         modify_order: crate::order_modify::OrderModify,
-    ) -> Option<crate::trade::Trades> {
+    ) -> Result<Option<crate::trade::Trades>, OrderError> {
         let entry = WalEntry::new(
             0,
             WalEntryType::ModifyOrder {
@@ -242,5 +242,13 @@ impl UsersEngine for WalEngine {
 
     fn get_balance(&self, user_id: crate::types::UserId, asset: Asset) -> Result<Quantity, String> {
         self.inner.get_balance(user_id, asset)
+    }
+
+    fn get_total_balance(
+        &self,
+        user_id: crate::types::UserId,
+        asset: Asset,
+    ) -> Result<Quantity, String> {
+        self.inner.get_total_balance(user_id, asset)
     }
 }
