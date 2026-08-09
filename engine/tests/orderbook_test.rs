@@ -308,7 +308,7 @@ fn trade_price_is_resting_order_price() {
     let trades = book.add_order(&buy, &mut generator).unwrap();
 
     assert_eq!(trades[0].get_ask_trade_info().get_price(), 51000);
-    assert_eq!(trades[0].get_bid_trade_info().get_price(), 52000);
+    assert_eq!(trades[0].get_bid_trade_info().get_price(), 51000);
 }
 
 #[test]

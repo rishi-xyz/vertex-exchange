@@ -171,8 +171,10 @@ impl OrderBook {
 
                     let bid_id: OrderId = bid.get_order_id();
                     let ask_id: OrderId = ask.get_order_id();
-                    let matched_bid_price: Price = bid.get_price();
-                    let matched_ask_price: Price = ask.get_price();
+                    let exec_price: Price = match aggressor_side {
+                        Side::Buy => ask_price,
+                        Side::Sell => bid_price,
+                    };
                     let bid_user_id: UserId = bid.get_user_id();
                     let ask_user_id: UserId = ask.get_user_id();
 
@@ -188,8 +190,8 @@ impl OrderBook {
                     let trade_id = generator.next_id();
                     trades.push_back(Trade::new(
                         trade_id,
-                        TradeInfo::new(bid_id, matched_bid_price, quantity, bid_user_id),
-                        TradeInfo::new(ask_id, matched_ask_price, quantity, ask_user_id),
+                        TradeInfo::new(bid_id, exec_price, quantity, bid_user_id),
+                        TradeInfo::new(ask_id, exec_price, quantity, ask_user_id),
                     ));
                 }
 
@@ -383,7 +385,7 @@ impl OrderBook {
                     let trade_id = generator.next_id();
                     let (bid_info, ask_info) = match order_side {
                         Side::Buy => (
-                            TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
+                            TradeInfo::new(order_id, resting_price_val, fill_qty, order_user_id),
                             TradeInfo::new(
                                 resting_id,
                                 resting_price_val,
@@ -398,7 +400,7 @@ impl OrderBook {
                                 fill_qty,
                                 resting_user_id,
                             ),
-                            TradeInfo::new(order_id, order_price, fill_qty, order_user_id),
+                            TradeInfo::new(order_id, resting_price_val, fill_qty, order_user_id),
                         ),
                     };
                     trades.push_back(Trade::new(trade_id, bid_info, ask_info));
@@ -570,6 +572,11 @@ impl OrderBook {
     /// Returns `true` if an order with the given ID exists in the book.
     pub fn has_order(&self, order_id: &OrderId) -> bool {
         self.orders_map.contains_key(order_id)
+    }
+
+    /// Returns a copy of the order with the given ID, if it exists.
+    pub fn get_order(&self, order_id: &OrderId) -> Option<Order> {
+        self.orders_map.get(order_id).copied()
     }
 
     /// Returns the order type for the given order ID, if it exists.
