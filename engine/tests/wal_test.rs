@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Write;
 
 use vertex_engine::engine::engine_from_env;
-use vertex_engine::engine::trade_def::ExchangeEngine;
+use vertex_engine::engine::trade_def::{ExchangeEngine, UsersEngine};
 use vertex_engine::types::{Asset, OrderType, Side, WalEntryType};
 use vertex_engine::wal::engine::WalEngine;
 use vertex_engine::wal::{WalEntry, WalReader, WalWriter};
@@ -208,6 +208,20 @@ fn replay_restores_order_in_book() {
         );
         writer.write(pair_entry).unwrap();
 
+        // Fund the user so the replayed order can be placed
+        let user_entry = WalEntry::new(0, WalEntryType::AddUser { user_id: user });
+        writer.write(user_entry).unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::DepositBalance {
+                    user_id: user,
+                    asset: Asset::USDC,
+                    quantity: 500000,
+                },
+            ))
+            .unwrap();
+
         // Then add a resting GTC order
         let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, user);
         let order_entry = WalEntry::new(
@@ -241,6 +255,21 @@ fn replay_restores_cancel() {
                 0,
                 WalEntryType::AddTradingPair {
                     pair: make_pair(Asset::ETH, Asset::USDC),
+                },
+            ))
+            .unwrap();
+
+        // Fund the user so the replayed order can be placed
+        writer
+            .write(WalEntry::new(0, WalEntryType::AddUser { user_id: user }))
+            .unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::DepositBalance {
+                    user_id: user,
+                    asset: Asset::USDC,
+                    quantity: 500000,
                 },
             ))
             .unwrap();
@@ -290,10 +319,11 @@ fn wal_engine_add_order_writes_entry_before_mutation() {
     let user = make_user_id();
 
     engine.add_trading_pair(pair);
+    engine.add_user(user);
+    engine.deposit_balance(user, Asset::USDC, 500000).unwrap();
     let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, user);
     let order_id = order.get_order_id();
-    engine.add_order(&pair, &order);
-
+    let _ = engine.add_order(&pair, &order);
     // Drop engine to flush WAL
     drop(engine);
 
@@ -301,8 +331,8 @@ fn wal_engine_add_order_writes_entry_before_mutation() {
     let reader = WalReader::new(&path).unwrap();
     let entries: Vec<WalEntry> = reader.collect();
 
-    // Should have: AddTradingPair + AddOrder = 2 entries
-    assert_eq!(entries.len(), 2);
+    // Should have: AddTradingPair + AddUser + DepositBalance + AddOrder = 4 entries
+    assert_eq!(entries.len(), 4);
 
     // First entry: AddTradingPair
     match entries[0].entry() {
@@ -313,15 +343,15 @@ fn wal_engine_add_order_writes_entry_before_mutation() {
         _ => panic!("Expected AddTradingPair as first entry"),
     }
 
-    // Second entry: AddOrder
-    match entries[1].entry() {
+    // Last entry: AddOrder
+    match entries[3].entry() {
         WalEntryType::AddOrder {
             pair: p, order: o, ..
         } => {
             assert_eq!(p.base, Asset::ETH);
             assert_eq!(o.get_order_id(), order_id);
         }
-        _ => panic!("Expected AddOrder as second entry"),
+        _ => panic!("Expected AddOrder as last entry"),
     }
 
     let _ = fs::remove_file(&path);
@@ -335,9 +365,11 @@ fn wal_engine_cancel_order_writes_entry() {
     let user = make_user_id();
 
     engine.add_trading_pair(pair);
+    engine.add_user(user);
+    engine.deposit_balance(user, Asset::USDC, 500000).unwrap();
     let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, user);
     let order_id = order.get_order_id();
-    engine.add_order(&pair, &order);
+    let _ = engine.add_order(&pair, &order);
     engine.cancel_order(&pair, &order_id);
 
     drop(engine);
@@ -345,10 +377,10 @@ fn wal_engine_cancel_order_writes_entry() {
     let reader = WalReader::new(&path).unwrap();
     let entries: Vec<WalEntry> = reader.collect();
 
-    // AddTradingPair + AddOrder + CancelOrder = 3
-    assert_eq!(entries.len(), 3);
+    // AddTradingPair + AddUser + DepositBalance + AddOrder + CancelOrder = 5
+    assert_eq!(entries.len(), 5);
 
-    match entries[2].entry() {
+    match entries[4].entry() {
         WalEntryType::CancelOrder {
             order_id: id,
             success,
@@ -357,7 +389,7 @@ fn wal_engine_cancel_order_writes_entry() {
             assert_eq!(*id, order_id);
             assert!(*success);
         }
-        _ => panic!("Expected CancelOrder as third entry"),
+        _ => panic!("Expected CancelOrder as last entry"),
     }
 
     let _ = fs::remove_file(&path);

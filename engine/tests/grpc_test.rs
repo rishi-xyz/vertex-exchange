@@ -72,6 +72,35 @@ fn random_user_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+async fn add_funded_user(
+    user_client: &mut UserSerivcesClient<Channel>,
+    engine_client: &mut EngineServicesClient<Channel>,
+) -> String {
+    let add_resp = engine_client
+        .add_user(proto::AddUserRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    let user_id = add_resp.user_id;
+    engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 1_000_000,
+        })
+        .await
+        .unwrap();
+    engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Eth as i32,
+            quantity: 100,
+        })
+        .await
+        .unwrap();
+    user_id
+}
+
 #[tokio::test]
 async fn test_add_trading_pair() {
     let (_, mut engine_client) = setup().await;
@@ -114,6 +143,8 @@ async fn test_submit_order_on_added_pair() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
+    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
+
     let resp = user_client
         .submit_order(proto::SubmitOrderRequest {
             pair: Some(eth_usdc_pair()),
@@ -121,7 +152,7 @@ async fn test_submit_order_on_added_pair() {
             side: proto::Side::Buy as i32,
             price: 2000,
             quantity: 10,
-            user_id: random_user_id(),
+            user_id,
         })
         .await
         .unwrap()
@@ -156,7 +187,7 @@ async fn test_submit_order_full_lifecycle() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
-    let user_id = random_user_id();
+    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
 
     let submit_resp = user_client
         .submit_order(proto::SubmitOrderRequest {
@@ -213,6 +244,8 @@ async fn test_cancel_order() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
+    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
+
     let resp = user_client
         .submit_order(proto::SubmitOrderRequest {
             pair: Some(eth_usdc_pair()),
@@ -220,7 +253,7 @@ async fn test_cancel_order() {
             side: proto::Side::Sell as i32,
             price: 2100,
             quantity: 3,
-            user_id: random_user_id(),
+            user_id,
         })
         .await
         .unwrap()
@@ -243,7 +276,7 @@ async fn test_modify_order() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
-    let user_id = random_user_id();
+    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
 
     let submit_resp = user_client
         .submit_order(proto::SubmitOrderRequest {
