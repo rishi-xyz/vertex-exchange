@@ -7,15 +7,23 @@ use crate::{
     orderbook::OrderBook,
     trade::Trades,
     trading_pair::TradingPair,
-    types::{Asset, OrderId, Quantity, UserId},
+    types::{Asset, OrderError, OrderId, Quantity, UserId},
 };
 
 pub trait ExchangeEngine {
     fn add_trading_pair(&mut self, pair: TradingPair);
     fn remove_trading_pair(&mut self, pair: &TradingPair) -> Option<OrderBook>;
-    fn add_order(&mut self, pair: &TradingPair, order: &Order) -> Option<Trades>;
+    fn add_order(
+        &mut self,
+        pair: &TradingPair,
+        order: &Order,
+    ) -> Result<Option<Trades>, OrderError>;
     fn cancel_order(&mut self, pair: &TradingPair, order_id: &OrderId) -> bool;
-    fn modify_order(&mut self, pair: &TradingPair, modify_order: OrderModify) -> Option<Trades>;
+    fn modify_order(
+        &mut self,
+        pair: &TradingPair,
+        modify_order: OrderModify,
+    ) -> Result<Option<Trades>, OrderError>;
     fn get_order_info(&self, pair: &TradingPair) -> Option<OrderBookLevelInfo>;
     fn size(&self, pair: &TradingPair) -> Option<usize>;
 }
@@ -36,4 +44,5 @@ pub trait UsersEngine {
         quantity: Quantity,
     ) -> Result<(), String>;
     fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String>;
+    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String>;
 }

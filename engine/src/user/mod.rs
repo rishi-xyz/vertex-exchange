@@ -96,7 +96,12 @@ impl User {
     /// * `asset` — The asset to credit
     /// * `amount` — Number of units to add
     pub fn add_balance(&mut self, asset: Asset, amount: Quantity) {
-        *self.balances.entry(asset).or_insert(0) += amount
+        *self.balances.entry(asset).or_insert(0) = self
+            .balances
+            .get(&asset)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(amount);
     }
 
     /// Returns the available (unlocked) balance for the given asset.
@@ -223,7 +228,9 @@ impl User {
         if entry.amount == 0 {
             self.locked_orders.remove(&order_id);
         }
-        *self.balances.entry(credit_asset).or_insert(0) += credit_amount;
+        let credit = self.balances.get(&credit_asset).copied().unwrap_or(0);
+        self.balances
+            .insert(credit_asset, credit.saturating_add(credit_amount));
         Ok(())
     }
 
