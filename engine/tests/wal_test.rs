@@ -171,6 +171,57 @@ fn replay_empty_wal_gives_empty_engine() {
 }
 
 #[test]
+fn replay_restores_balances() {
+    let path = tmp_wal_path("replay_balances");
+    let user = make_user_id();
+
+    {
+        let mut writer = WalWriter::new(&path).unwrap();
+
+        writer
+            .write(WalEntry::new(0, WalEntryType::AddUser { user_id: user }))
+            .unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::DepositBalance {
+                    user_id: user,
+                    asset: Asset::USDC,
+                    quantity: 10000,
+                },
+            ))
+            .unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::DepositBalance {
+                    user_id: user,
+                    asset: Asset::ETH,
+                    quantity: 5,
+                },
+            ))
+            .unwrap();
+        writer
+            .write(WalEntry::new(
+                0,
+                WalEntryType::WithdrawBalance {
+                    user_id: user,
+                    asset: Asset::USDC,
+                    quantity: 3000,
+                },
+            ))
+            .unwrap();
+    }
+
+    let engine = WalEngine::new(1, 1, &path).unwrap();
+    assert_eq!(engine.get_balance(user, Asset::USDC), Ok(7000));
+    assert_eq!(engine.get_total_balance(user, Asset::USDC), Ok(7000));
+    assert_eq!(engine.get_balance(user, Asset::ETH), Ok(5));
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn replay_restores_trading_pair() {
     let path = tmp_wal_path("replay_pair");
     {
