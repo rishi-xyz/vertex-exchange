@@ -15,8 +15,9 @@ use crate::{
         trade_def::{ExchangeEngine, UsersEngine},
     },
     grpc::proto::{
-        DepositBalanceResponse, RemoveUserResponse, WithdrawBalanceResponse,
-        engine_services_server::EngineServices, user_serivces_server::UserSerivces,
+        DepositBalanceResponse, GetBalanceResponse, GetTotalBalanceResponse, RemoveUserResponse,
+        WithdrawBalanceResponse, engine_services_server::EngineServices,
+        user_serivces_server::UserSerivces,
     },
     level_info::OrderBookLevelInfo,
     order::Order,
@@ -75,6 +76,16 @@ pub enum EngineCommand {
         asset: Asset,
         quantity: Quantity,
         reply: oneshot::Sender<Result<(), String>>,
+    },
+    GetBalance {
+        user_id: Uuid,
+        asset: Asset,
+        reply: oneshot::Sender<Result<Quantity, String>>,
+    },
+    GetTotalBalance {
+        user_id: Uuid,
+        asset: Asset,
+        reply: oneshot::Sender<Result<Quantity, String>>,
     },
 }
 
@@ -295,6 +306,36 @@ pub async fn run_engine(
                     }
                     Err(e) => {
                         tracing::error!("withdraw_balance panic: {:?}", e);
+                        let _ = reply.send(Err("Internal engine error".into()));
+                    }
+                }
+            }
+            EngineCommand::GetBalance { user_id, asset, reply } => {
+                tracing::info!(%user_id, ?asset, "get_balance");
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.get_balance(user_id, asset)
+                }));
+                match result {
+                    Ok(r) => {
+                        let _ = reply.send(r);
+                    }
+                    Err(e) => {
+                        tracing::error!("get_balance panic: {:?}", e);
+                        let _ = reply.send(Err("Internal engine error".into()));
+                    }
+                }
+            }
+            EngineCommand::GetTotalBalance { user_id, asset, reply } => {
+                tracing::info!(%user_id, ?asset, "get_total_balance");
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.get_total_balance(user_id, asset)
+                }));
+                match result {
+                    Ok(r) => {
+                        let _ = reply.send(r);
+                    }
+                    Err(e) => {
+                        tracing::error!("get_total_balance panic: {:?}", e);
                         let _ = reply.send(Err("Internal engine error".into()));
                     }
                 }
@@ -645,6 +686,58 @@ impl EngineServices for EngineService {
             .map_err(|_| Status::internal("Engine crashed"))?;
         match result {
             Ok(()) => Ok(Response::new(WithdrawBalanceResponse { success: true })),
+            Err(e) => Err(Status::failed_precondition(e)),
+        }
+    }
+    async fn get_balance(
+        &self,
+        request: tonic::Request<proto::GetBalanceRequest>,
+    ) -> Result<tonic::Response<proto::GetBalanceResponse>, Status> {
+        let req = request.into_inner();
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Invalid User Id"))?;
+        let asset = proto_asset_to_engine(req.asset())
+            .map_err(|_| Status::invalid_argument("Invalid Asset"))?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::GetBalance {
+                user_id,
+                asset,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::internal("Engine unavailable"))?;
+        let result = reply_rx
+            .await
+            .map_err(|_| Status::internal("Engine crashed"))?;
+        match result {
+            Ok(quantity) => Ok(Response::new(GetBalanceResponse { quantity })),
+            Err(e) => Err(Status::failed_precondition(e)),
+        }
+    }
+    async fn get_total_balance(
+        &self,
+        request: tonic::Request<proto::GetTotalBalanceRequest>,
+    ) -> Result<tonic::Response<proto::GetTotalBalanceResponse>, Status> {
+        let req = request.into_inner();
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("Invalid User Id"))?;
+        let asset = proto_asset_to_engine(req.asset())
+            .map_err(|_| Status::invalid_argument("Invalid Asset"))?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(EngineCommand::GetTotalBalance {
+                user_id,
+                asset,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| Status::internal("Engine unavailable"))?;
+        let result = reply_rx
+            .await
+            .map_err(|_| Status::internal("Engine crashed"))?;
+        match result {
+            Ok(quantity) => Ok(Response::new(GetTotalBalanceResponse { quantity })),
             Err(e) => Err(Status::failed_precondition(e)),
         }
     }

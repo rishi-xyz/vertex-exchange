@@ -168,6 +168,24 @@ message WithdrawBalanceResponse {
   bool success = 1;
 }
 
+message GetBalanceRequest {
+  string user_id = 1;
+  Asset asset = 2;
+}
+
+message GetBalanceResponse {
+  uint32 quantity = 1;
+}
+
+message GetTotalBalanceRequest {
+  string user_id = 1;
+  Asset asset = 2;
+}
+
+message GetTotalBalanceResponse {
+  uint32 quantity = 1;
+}
+
 service UserSerivces {
   rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
   rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
@@ -181,4 +199,6 @@ service EngineServices {
   rpc RemoveUser(RemoveUserRequest) returns (RemoveUserResponse);
   rpc DepositBalance(DepositBalanceRequest) returns (DepositBalanceResponse);
   rpc WithdrawBalance(WithdrawBalanceRequest) returns (WithdrawBalanceResponse);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc GetTotalBalance(GetTotalBalanceRequest) returns (GetTotalBalanceResponse);
 }

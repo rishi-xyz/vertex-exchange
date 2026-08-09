@@ -72,10 +72,7 @@ fn random_user_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-async fn add_funded_user(
-    user_client: &mut UserSerivcesClient<Channel>,
-    engine_client: &mut EngineServicesClient<Channel>,
-) -> String {
+async fn add_funded_user(engine_client: &mut EngineServicesClient<Channel>) -> String {
     let add_resp = engine_client
         .add_user(proto::AddUserRequest {})
         .await
@@ -143,7 +140,7 @@ async fn test_submit_order_on_added_pair() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
-    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
+    let user_id = add_funded_user(&mut engine_client).await;
 
     let resp = user_client
         .submit_order(proto::SubmitOrderRequest {
@@ -187,7 +184,7 @@ async fn test_submit_order_full_lifecycle() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
-    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
+    let user_id = add_funded_user(&mut engine_client).await;
 
     let submit_resp = user_client
         .submit_order(proto::SubmitOrderRequest {
@@ -244,7 +241,7 @@ async fn test_cancel_order() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
-    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
+    let user_id = add_funded_user(&mut engine_client).await;
 
     let resp = user_client
         .submit_order(proto::SubmitOrderRequest {
@@ -276,7 +273,7 @@ async fn test_modify_order() {
     let (mut user_client, mut engine_client) = setup().await;
     add_eth_usdc(&mut engine_client).await;
 
-    let user_id = add_funded_user(&mut user_client, &mut engine_client).await;
+    let user_id = add_funded_user(&mut engine_client).await;
 
     let submit_resp = user_client
         .submit_order(proto::SubmitOrderRequest {
@@ -461,4 +458,64 @@ async fn test_add_user_then_deposit_withdraw_and_remove() {
         .unwrap()
         .into_inner();
     assert!(resp.success);
+}
+
+#[tokio::test]
+async fn test_get_balance_returns_available() {
+    let (mut user_client, mut engine_client) = setup().await;
+    let user_id = add_funded_user(&mut engine_client).await;
+    engine_client
+        .add_trading_pair(proto::AddTradingPairRequest {
+            pair: Some(eth_usdc_pair()),
+        })
+        .await
+        .unwrap();
+    user_client
+        .submit_order(proto::SubmitOrderRequest {
+            pair: Some(eth_usdc_pair()),
+            order_type: proto::OrderType::GoodTillCancel as i32,
+            side: proto::Side::Buy as i32,
+            price: 10,
+            quantity: 10,
+            user_id: user_id.clone(),
+        })
+        .await
+        .unwrap();
+    let available = engine_client
+        .get_balance(proto::GetBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let total = engine_client
+        .get_total_balance(proto::GetTotalBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(available.quantity, 1_000_000 - 100);
+    assert_eq!(total.quantity, 1_000_000);
+}
+
+#[tokio::test]
+async fn test_get_balance_missing_user_fails() {
+    let (_, mut engine_client) = setup().await;
+    let result = engine_client
+        .get_balance(proto::GetBalanceRequest {
+            user_id: random_user_id(),
+            asset: proto::Asset::Usdc as i32,
+        })
+        .await;
+    assert!(result.is_err());
+    let result = engine_client
+        .get_total_balance(proto::GetTotalBalanceRequest {
+            user_id: random_user_id(),
+            asset: proto::Asset::Usdc as i32,
+        })
+        .await;
+    assert!(result.is_err());
 }
