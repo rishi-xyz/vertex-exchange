@@ -127,3 +127,26 @@ func (s *Server) broadcastTrade(pairStr string, trade map[string]any) {
 	}
 	s.hub.Broadcast(pairStr, msg)
 }
+
+// OnFill persists-then-pushes a fill to the websocket subscribers of its pair.
+func (s *Server) OnFill(f db.Fill) {
+	s.broadcastTrade(f.Pair, map[string]any{
+		"trade_id":  f.TradeID,
+		"timestamp": f.Timestamp / 1_000_000,
+		"price":     f.BidPrice,
+		"quantity":  f.BidQuantity,
+		"bid": map[string]any{
+			"order_id": f.BidOrderID,
+			"user_id":  f.BidUserID,
+			"price":    f.BidPrice,
+			"quantity": f.BidQuantity,
+		},
+		"ask": map[string]any{
+			"order_id": f.AskOrderID,
+			"user_id":  f.AskUserID,
+			"price":    f.AskPrice,
+			"quantity": f.AskQuantity,
+		},
+	})
+	s.broadcastDepth(context.Background(), f.Pair)
+}

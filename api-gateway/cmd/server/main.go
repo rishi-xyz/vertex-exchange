@@ -9,6 +9,7 @@ import (
 
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/fills"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/server"
 )
@@ -36,19 +37,30 @@ func main() {
 	defer engine.Close()
 	log.Printf("connected to engine at %s", cfg.EngineGRPCAddr)
 
-	srv := &http.Server{
+	store := db.NewStore(pool)
+	srv := server.New(cfg, engine, store)
+
+	consumer, err := fills.New(cfg.RedisURL, store, srv.OnFill)
+	if err != nil {
+		log.Fatalf("fills consumer: %v", err)
+	}
+	defer consumer.Close()
+	go consumer.Run(ctx)
+	log.Printf("fills consumer started")
+
+	httpSrv := &http.Server{
 		Addr:    ":" + cfg.GatewayPort,
-		Handler: server.New(cfg, engine, db.NewStore(pool)).Router(),
+		Handler: srv.Router(),
 	}
 
 	go func() {
 		log.Printf("gateway listening on :%s", cfg.GatewayPort)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
 
 	<-ctx.Done()
 	log.Println("shutting down")
-	srv.Shutdown(context.Background())
+	httpSrv.Shutdown(context.Background())
 }
