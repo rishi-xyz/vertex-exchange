@@ -632,6 +632,45 @@ fn fok_partial_unfilled_returns_none_safety_net() {
 }
 
 #[test]
+fn fok_rejected_leaves_resting_orders_untouched() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+
+    let sell = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 10, uid_b());
+    book.add_order(&sell, &mut generator);
+
+    let buy = make_order(OrderType::FillOrKill, Side::Buy, 50000, 20, uid_a());
+    assert!(book.add_order(&buy, &mut generator).is_none());
+
+    // Atomicity: the rejected FOK must not have partially consumed the
+    // resting order or changed its remaining quantity.
+    assert_eq!(book.size(), 1);
+    let info = book.get_order_info();
+    assert_eq!(info.get_asks().len(), 1);
+    assert_eq!(info.get_asks()[0].quantity, 10);
+}
+
+#[test]
+fn fok_rejected_leaves_multiple_levels_untouched() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+
+    let sell1 = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 5, uid_b());
+    book.add_order(&sell1, &mut generator);
+    let sell2 = make_order(OrderType::GoodTillCancel, Side::Sell, 50100, 5, uid_b());
+    book.add_order(&sell2, &mut generator);
+
+    let buy = make_order(OrderType::FillOrKill, Side::Buy, 50200, 15, uid_a());
+    assert!(book.add_order(&buy, &mut generator).is_none());
+
+    assert_eq!(book.size(), 2);
+    let info = book.get_order_info();
+    assert_eq!(info.get_asks().len(), 2);
+    assert_eq!(info.get_asks()[0].quantity, 5);
+    assert_eq!(info.get_asks()[1].quantity, 5);
+}
+
+#[test]
 fn fok_does_not_enter_book() {
     let mut book = new_book();
     let mut generator = make_generator();

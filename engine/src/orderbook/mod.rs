@@ -278,9 +278,11 @@ impl OrderBook {
         let order_user_id = aggressor.get_user_id();
         let required_qty: Quantity = aggressor.get_remaining_quantity();
 
-        // FOK pre-check: sum available liquidity (read-only) before mutating
+        // FOK pre-check: sum available liquidity (read-only) before mutating.
+        // Accumulate in u64 — a u32 sum can overflow with deep books, which would
+        // corrupt the pre-check and let the safety net below fire mid-mutation.
         if require_full_fill {
-            let mut available: Quantity = 0;
+            let mut available: u64 = 0;
             match order_side {
                 Side::Buy => {
                     for (price, orders) in self.asks_map.iter() {
@@ -289,7 +291,7 @@ impl OrderBook {
                         }
                         for o in orders.iter() {
                             if o.get_user_id() != order_user_id {
-                                available += o.get_remaining_quantity();
+                                available += o.get_remaining_quantity() as u64;
                             }
                         }
                     }
@@ -301,13 +303,13 @@ impl OrderBook {
                         }
                         for o in orders.iter() {
                             if o.get_user_id() != order_user_id {
-                                available += o.get_remaining_quantity();
+                                available += o.get_remaining_quantity() as u64;
                             }
                         }
                     }
                 }
             }
-            if available < required_qty {
+            if available < required_qty as u64 {
                 return None;
             }
         }
@@ -460,9 +462,14 @@ impl OrderBook {
             }
         }
 
-        // FOK safety net: if somehow not fully filled, reject
+        // FOK safety net: with an exact pre-check this is unreachable — if it
+        // ever fires, resting orders were partially filled without a full fill,
+        // the book is corrupt, and continuing would be worse than failing fast.
         if require_full_fill && remaining_qty > 0 {
-            return None;
+            panic!(
+                "FOK safety net fired: order {} not fully filled ({remaining_qty} remaining) after mutation; book state corrupt",
+                order_id
+            );
         }
 
         Some(trades)
