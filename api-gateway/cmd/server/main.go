@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
 )
 
@@ -19,6 +20,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+
+	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	defer pool.Close()
+	log.Printf("connected to postgres")
 
 	engine, err := grpcclient.New(ctx, cfg.EngineGRPCAddr)
 	if err != nil {
