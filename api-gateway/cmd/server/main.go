@@ -10,6 +10,7 @@ import (
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/server"
 )
 
 func main() {
@@ -35,19 +36,9 @@ func main() {
 	defer engine.Close()
 	log.Printf("connected to engine at %s", cfg.EngineGRPCAddr)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := engine.Ping(r.Context()); err != nil {
-			http.Error(w, "engine unreachable", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-
 	srv := &http.Server{
 		Addr:    ":" + cfg.GatewayPort,
-		Handler: mux,
+		Handler: server.New(cfg, engine, db.NewStore(pool)).Router(),
 	}
 
 	go func() {
