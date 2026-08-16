@@ -48,6 +48,17 @@ pub enum OrderError {
     InvalidOrder,
 }
 
+/// Errors that can occur when managing users or their balances.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserError {
+    /// The referenced user does not exist in the engine.
+    NoSuchUser,
+    /// Not enough available balance for the operation (withdraw, lock).
+    InsufficientBalance,
+    /// The operation would overflow the user's balance (deposit, fill credit).
+    BalanceOverflow,
+}
+
 /// Determines how long an order lives and how it interacts with the book.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OrderType {

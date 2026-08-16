@@ -15,9 +15,9 @@ use crate::{
         trade_def::{ExchangeEngine, UsersEngine},
     },
     grpc::proto::{
-        DepositBalanceResponse, GetBalanceResponse, GetTotalBalanceResponse, RemoveUserResponse,
-        WithdrawBalanceResponse, engine_services_server::EngineServices,
-        user_serivces_server::UserSerivces,
+        AddUserResponse, DepositBalanceResponse, GetBalanceResponse, GetTotalBalanceResponse,
+        RemoveUserResponse, WithdrawBalanceResponse, engine_services_server::EngineServices,
+        user_services_server::UserServices,
     },
     level_info::OrderBookLevelInfo,
     order::Order,
@@ -25,8 +25,47 @@ use crate::{
     redis::FillPublisher,
     trade::{self, Trades},
     trading_pair::TradingPair,
-    types::{Asset, OrderId, OrderStatus, OrderType, Price, Quantity, Side},
+    types::{Asset, OrderError, OrderId, OrderStatus, OrderType, Price, Quantity, Side, UserError},
 };
+
+/// A failure surfaced from the engine task, mapped to a tonic [`Status`].
+///
+/// A [`Panic`](EngineError::Panic) variant means the engine panicked while
+/// processing the command; `run_engine` replies with it and then initiates a
+/// fail-fast shutdown (the process exits rather than continuing in a corrupt
+/// state).
+#[derive(Debug)]
+pub enum EngineError {
+    /// The engine panicked while processing the command.
+    Panic(Box<dyn std::any::Any + Send>),
+    /// The command was rejected with an order-level error.
+    Order(OrderError),
+    /// The command was rejected with a user/balance-level error.
+    User(UserError),
+}
+
+impl EngineError {
+    fn to_status(&self) -> Status {
+        match self {
+            EngineError::Panic(_) => Status::internal("internal engine error"),
+            EngineError::Order(e) => match e {
+                OrderError::NoSuchPair => Status::not_found("trading pair not found"),
+                OrderError::NoSuchUser => Status::not_found("user not found"),
+                OrderError::InsufficientBalance => {
+                    Status::failed_precondition("insufficient balance")
+                }
+                OrderError::InvalidOrder => Status::invalid_argument("invalid order"),
+            },
+            EngineError::User(e) => match e {
+                UserError::NoSuchUser => Status::not_found("user not found"),
+                UserError::InsufficientBalance => {
+                    Status::failed_precondition("insufficient balance")
+                }
+                UserError::BalanceOverflow => Status::failed_precondition("balance overflow"),
+            },
+        }
+    }
+}
 
 pub enum EngineCommand {
     // Engine service commands
@@ -37,55 +76,56 @@ pub enum EngineCommand {
         price: Price,
         quantity: Quantity,
         user_id: Uuid,
-        reply: oneshot::Sender<Option<(OrderId, Trades)>>,
+        reply: oneshot::Sender<Result<(OrderId, Option<Trades>), EngineError>>,
     },
     CancelOrder {
         pair: TradingPair,
         order_id: OrderId,
-        reply: oneshot::Sender<bool>,
+        reply: oneshot::Sender<Result<bool, EngineError>>,
     },
     ModifyOrder {
         pair: TradingPair,
         modify: OrderModify,
-        reply: oneshot::Sender<Option<Trades>>,
+        reply: oneshot::Sender<Result<Option<Trades>, EngineError>>,
     },
     GetOrderBook {
         pair: TradingPair,
-        reply: oneshot::Sender<Option<OrderBookLevelInfo>>,
+        reply: oneshot::Sender<Result<OrderBookLevelInfo, EngineError>>,
     },
     AddTradingPair {
         pair: TradingPair,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<(), EngineError>>,
     },
     // user service commands
     AddUser {
-        reply: oneshot::Sender<Uuid>,
+        user_id: Uuid,
+        reply: oneshot::Sender<Result<(), EngineError>>,
     },
     RemoveUser {
         user_id: Uuid,
-        reply: oneshot::Sender<Result<HashMap<Asset, Quantity>, String>>,
+        reply: oneshot::Sender<Result<HashMap<Asset, Quantity>, EngineError>>,
     },
     DepositBalance {
         user_id: Uuid,
         asset: Asset,
         quantity: Quantity,
-        reply: oneshot::Sender<Result<(), String>>,
+        reply: oneshot::Sender<Result<(), EngineError>>,
     },
     WithdrawBalance {
         user_id: Uuid,
         asset: Asset,
         quantity: Quantity,
-        reply: oneshot::Sender<Result<(), String>>,
+        reply: oneshot::Sender<Result<(), EngineError>>,
     },
     GetBalance {
         user_id: Uuid,
         asset: Asset,
-        reply: oneshot::Sender<Result<Quantity, String>>,
+        reply: oneshot::Sender<Result<Quantity, EngineError>>,
     },
     GetTotalBalance {
         user_id: Uuid,
         asset: Asset,
-        reply: oneshot::Sender<Result<Quantity, String>>,
+        reply: oneshot::Sender<Result<Quantity, EngineError>>,
     },
 }
 
@@ -104,6 +144,7 @@ pub async fn run_engine(
     mut rx: mpsc::Receiver<EngineCommand>,
     mut engine: EngineWrapper,
     publisher: FillPublisher,
+    fatal_tx: oneshot::Sender<()>,
 ) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
@@ -128,32 +169,23 @@ pub async fn run_engine(
                         quantity,
                         user_id,
                     );
-                    let trades = engine.add_order(&pair, &order);
-                    (order_id, trades)
+                    let trades = engine
+                        .add_order(&pair, &order)
+                        .map_err(EngineError::Order)?;
+                    Ok::<_, EngineError>((order_id, trades))
                 }));
                 match result {
-                    Ok((order_id, trades)) => {
-                        tracing::debug!(
-                            order_id,
-                            has_trades = matches!(trades, Ok(Some(_))),
-                            "submit_order complete"
-                        );
-                        match trades {
-                            Ok(trades) => {
-                                if let Some(ref trades) = trades {
-                                    publisher.publish_fills(&pair, trades).await;
-                                }
-                                let _ = reply.send(trades.map(|t| (order_id, t)));
-                            }
-                            Err(e) => {
-                                tracing::warn!(%pair, order_id, error = ?e, "submit_order rejected");
-                                let _ = reply.send(None);
-                            }
+                    Ok(res) => {
+                        if let Ok((_order_id, Some(ref trades))) = res {
+                            publisher.publish_fills(&pair, trades).await;
                         }
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("submit_order panic: {:?}", e);
-                        let _ = reply.send(None);
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
@@ -164,16 +196,18 @@ pub async fn run_engine(
             } => {
                 tracing::debug!(%pair, order_id, "cancel_order");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.cancel_order(&pair, &order_id)
+                    Ok::<_, EngineError>(engine.cancel_order(&pair, &order_id))
                 }));
                 match result {
-                    Ok(success) => {
-                        tracing::debug!(order_id, success, "cancel_order complete");
-                        let _ = reply.send(success);
+                    Ok(res) => {
+                        tracing::debug!(order_id, "cancel_order complete");
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("cancel_order panic: {:?}", e);
-                        let _ = reply.send(false);
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
@@ -184,89 +218,95 @@ pub async fn run_engine(
             } => {
                 tracing::debug!(%pair, "modify_order");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.modify_order(&pair, modify)
+                    let trades = engine
+                        .modify_order(&pair, modify)
+                        .map_err(EngineError::Order)?;
+                    Ok::<_, EngineError>(trades)
                 }));
                 match result {
-                    Ok(trades) => {
-                        tracing::debug!(%pair, "modify_order complete");
-                        match trades {
-                            Ok(trades) => {
-                                if let Some(ref trades) = trades {
-                                    publisher.publish_fills(&pair, trades).await;
-                                }
-                                let _ = reply.send(trades);
-                            }
-                            Err(e) => {
-                                tracing::warn!(%pair, error = ?e, "modify_order rejected");
-                                let _ = reply.send(None);
-                            }
+                    Ok(res) => {
+                        if let Ok(Some(ref trades)) = res {
+                            publisher.publish_fills(&pair, trades).await;
                         }
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("modify_order panic: {:?}", e);
-                        let _ = reply.send(None);
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
             EngineCommand::GetOrderBook { pair, reply } => {
                 tracing::debug!(%pair, "get_order_book");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.get_order_info(&pair)
+                    engine
+                        .get_order_info(&pair)
+                        .ok_or(EngineError::Order(OrderError::NoSuchPair))
                 }));
                 match result {
-                    Ok(info) => {
-                        let _ = reply.send(info);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("get_order_book panic: {:?}", e);
-                        let _ = reply.send(None);
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
             EngineCommand::AddTradingPair { pair, reply } => {
                 tracing::info!(%pair, "add_trading_pair");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.add_trading_pair(pair)
+                    engine.add_trading_pair(pair);
+                    Ok::<_, EngineError>(())
                 }));
                 match result {
-                    Ok(_) => {
-                        let _ = reply.send(());
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("add_trading_pair panic: {:?}", e);
-                        let _ = reply.send(());
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
-            EngineCommand::AddUser { reply } => {
+            EngineCommand::AddUser { user_id, reply } => {
+                tracing::info!(%user_id, "add_user");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let user_id = Uuid::new_v4();
                     engine.add_user(user_id);
-                    user_id
+                    Ok::<_, EngineError>(())
                 }));
                 match result {
-                    Ok(user_id) => {
-                        tracing::info!(%user_id, "add_user");
-                        let _ = reply.send(user_id);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("add_user panic: {:?}", e);
-                        let _ = reply.send(Uuid::nil());
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
             EngineCommand::RemoveUser { user_id, reply } => {
                 tracing::info!(%user_id, "remove_user");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.remove_user(user_id)
+                    engine.remove_user(user_id).map_err(EngineError::User)
                 }));
                 match result {
-                    Ok(r) => {
-                        let _ = reply.send(r);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("remove_user panic: {:?}", e);
-                        let _ = reply.send(Err("Internal engine error".into()));
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
@@ -278,15 +318,19 @@ pub async fn run_engine(
             } => {
                 tracing::info!(%user_id, ?asset, quantity, "deposit_balance");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.deposit_balance(user_id, asset, quantity)
+                    engine
+                        .deposit_balance(user_id, asset, quantity)
+                        .map_err(EngineError::User)
                 }));
                 match result {
-                    Ok(r) => {
-                        let _ = reply.send(r);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("deposit_balance panic: {:?}", e);
-                        let _ = reply.send(Err("Internal engine error".into()));
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
@@ -298,45 +342,65 @@ pub async fn run_engine(
             } => {
                 tracing::info!(%user_id, ?asset, quantity, "withdraw_balance");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.withdraw_balance(user_id, asset, quantity)
+                    engine
+                        .withdraw_balance(user_id, asset, quantity)
+                        .map_err(EngineError::User)
                 }));
                 match result {
-                    Ok(r) => {
-                        let _ = reply.send(r);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("withdraw_balance panic: {:?}", e);
-                        let _ = reply.send(Err("Internal engine error".into()));
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
-            EngineCommand::GetBalance { user_id, asset, reply } => {
+            EngineCommand::GetBalance {
+                user_id,
+                asset,
+                reply,
+            } => {
                 tracing::info!(%user_id, ?asset, "get_balance");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.get_balance(user_id, asset)
+                    engine
+                        .get_balance(user_id, asset)
+                        .map_err(EngineError::User)
                 }));
                 match result {
-                    Ok(r) => {
-                        let _ = reply.send(r);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("get_balance panic: {:?}", e);
-                        let _ = reply.send(Err("Internal engine error".into()));
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
-            EngineCommand::GetTotalBalance { user_id, asset, reply } => {
+            EngineCommand::GetTotalBalance {
+                user_id,
+                asset,
+                reply,
+            } => {
                 tracing::info!(%user_id, ?asset, "get_total_balance");
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine.get_total_balance(user_id, asset)
+                    engine
+                        .get_total_balance(user_id, asset)
+                        .map_err(EngineError::User)
                 }));
                 match result {
-                    Ok(r) => {
-                        let _ = reply.send(r);
+                    Ok(res) => {
+                        let _ = reply.send(res);
                     }
                     Err(e) => {
                         tracing::error!("get_total_balance panic: {:?}", e);
-                        let _ = reply.send(Err("Internal engine error".into()));
+                        let _ = reply.send(Err(EngineError::Panic(e)));
+                        let _ = fatal_tx.send(());
+                        break;
                     }
                 }
             }
@@ -377,17 +441,6 @@ fn proto_pair_to_engine(pair: proto::TradingPair) -> Result<TradingPair, Status>
     ))
 }
 
-// #[warn(dead_code)]
-// fn engine_asset_to_proto(asset: crate::types::Asset) -> proto::Asset {
-//     match asset {
-//         crate::types::Asset::ETH => proto::Asset::Eth,
-//         crate::types::Asset::SOL => proto::Asset::Sol,
-//         crate::types::Asset::BTC => proto::Asset::Btc,
-//         crate::types::Asset::USDC => proto::Asset::Usdc,
-//         crate::types::Asset::USDT => proto::Asset::Usdt,
-//     }
-// }
-
 fn engine_trade_to_proto(trade: trade::Trade) -> proto::Trade {
     proto::Trade {
         trade_id: trade.get_trade_id(),
@@ -408,7 +461,7 @@ fn engine_trade_to_proto(trade: trade::Trade) -> proto::Trade {
 }
 
 #[tonic::async_trait]
-impl UserSerivces for EngineService {
+impl UserServices for EngineService {
     async fn submit_order(
         &self,
         request: Request<proto::SubmitOrderRequest>,
@@ -441,14 +494,15 @@ impl UserSerivces for EngineService {
             .await
             .map_err(|_| Status::internal("engine task crashed"))?;
         match result {
-            Some((order_id, trades)) => Ok(Response::new(proto::SubmitOrderResponse {
+            Ok((order_id, trades)) => Ok(Response::new(proto::SubmitOrderResponse {
                 order_id,
                 trades: trades
                     .into_iter()
-                    .map(|t| engine_trade_to_proto(t))
+                    .flatten()
+                    .map(engine_trade_to_proto)
                     .collect(),
             })),
-            None => Err(Status::failed_precondition("order could not be placed")),
+            Err(e) => Err(e.to_status()),
         }
     }
 
@@ -474,10 +528,10 @@ impl UserSerivces for EngineService {
         let result = reply_rx
             .await
             .map_err(|_| Status::internal("engine task crashed"))?;
-
-        Ok(Response::new(proto::CancelOrderResponse {
-            success: result,
-        }))
+        match result {
+            Ok(success) => Ok(Response::new(proto::CancelOrderResponse { success })),
+            Err(e) => Err(e.to_status()),
+        }
     }
 
     async fn modify_order(
@@ -512,13 +566,14 @@ impl UserSerivces for EngineService {
             .await
             .map_err(|_| Status::internal("engine task crashed"))?;
         match result {
-            Some(trades) => Ok(Response::new(proto::ModifyOrderResponse {
+            Ok(trades) => Ok(Response::new(proto::ModifyOrderResponse {
                 trades: trades
                     .into_iter()
-                    .map(|trade| engine_trade_to_proto(trade))
+                    .flatten()
+                    .map(engine_trade_to_proto)
                     .collect(),
             })),
-            None => Err(Status::failed_precondition("order could not be modified")),
+            Err(e) => Err(e.to_status()),
         }
     }
 
@@ -544,7 +599,7 @@ impl UserSerivces for EngineService {
         let info = reply_rx
             .await
             .map_err(|_| Status::internal("engine task crashed"))?
-            .ok_or_else(|| Status::not_found("trading pair not found"))?;
+            .map_err(|e| e.to_status())?;
 
         let bids = info
             .get_bids()
@@ -587,28 +642,45 @@ impl EngineServices for EngineService {
             })
             .await
             .map_err(|_| Status::internal("engine unavailable"))?;
-        reply_rx
+        match reply_rx
             .await
-            .map_err(|_| Status::internal("engine task crashed"))?;
-        Ok(Response::new(proto::AddTradingPairResponse {
-            success: true,
-        }))
+            .map_err(|_| Status::internal("engine task crashed"))?
+        {
+            Ok(()) => Ok(Response::new(proto::AddTradingPairResponse {
+                success: true,
+            })),
+            Err(e) => Err(e.to_status()),
+        }
     }
 
     async fn add_user(
         &self,
-        _request: tonic::Request<proto::AddUserRequest>,
-    ) -> Result<tonic::Response<proto::AddUserResponse>, Status> {
+        request: tonic::Request<proto::AddUserRequest>,
+    ) -> Result<tonic::Response<AddUserResponse>, Status> {
+        let req = request.into_inner();
+        // The client generates the user id (it doubles as the primary key in
+        // the Postgres user table and keeps the operation idempotent for WAL
+        // replay) — the engine just registers it.
+        let user_id = Uuid::parse_str(&req.user_id)
+            .map_err(|_| Status::invalid_argument("invalid user_id"))?;
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
-            .send(EngineCommand::AddUser { reply: reply_tx })
+            .send(EngineCommand::AddUser {
+                user_id,
+                reply: reply_tx,
+            })
             .await
-            .map_err(|_| Status::internal("Engine Error"))?;
-        let user_id = reply_rx
+            .map_err(|_| Status::internal("engine unavailable"))?;
+        match reply_rx
             .await
-            .map_err(|_| Status::internal("Engine crashed"))?
-            .to_string();
-        Ok(Response::new(proto::AddUserResponse { user_id }))
+            .map_err(|_| Status::internal("engine task crashed"))?
+        {
+            Ok(()) => Ok(Response::new(AddUserResponse {
+                success: true,
+                user_id: user_id.to_string(),
+            })),
+            Err(e) => Err(e.to_status()),
+        }
     }
     async fn remove_user(
         &self,
@@ -630,7 +702,7 @@ impl EngineServices for EngineService {
             .map_err(|_| Status::internal("Engine crashed"))?;
         match result {
             Ok(_map) => Ok(Response::new(RemoveUserResponse { success: true })),
-            Err(e) => Err(Status::failed_precondition(e)),
+            Err(e) => Err(e.to_status()),
         }
     }
     async fn deposit_balance(
@@ -658,7 +730,7 @@ impl EngineServices for EngineService {
             .map_err(|_| Status::internal("Engine crashed"))?;
         match result {
             Ok(()) => Ok(Response::new(DepositBalanceResponse { success: true })),
-            Err(e) => Err(Status::failed_precondition(e)),
+            Err(e) => Err(e.to_status()),
         }
     }
     async fn withdraw_balance(
@@ -686,7 +758,7 @@ impl EngineServices for EngineService {
             .map_err(|_| Status::internal("Engine crashed"))?;
         match result {
             Ok(()) => Ok(Response::new(WithdrawBalanceResponse { success: true })),
-            Err(e) => Err(Status::failed_precondition(e)),
+            Err(e) => Err(e.to_status()),
         }
     }
     async fn get_balance(
@@ -712,7 +784,7 @@ impl EngineServices for EngineService {
             .map_err(|_| Status::internal("Engine crashed"))?;
         match result {
             Ok(quantity) => Ok(Response::new(GetBalanceResponse { quantity })),
-            Err(e) => Err(Status::failed_precondition(e)),
+            Err(e) => Err(e.to_status()),
         }
     }
     async fn get_total_balance(
@@ -738,7 +810,7 @@ impl EngineServices for EngineService {
             .map_err(|_| Status::internal("Engine crashed"))?;
         match result {
             Ok(quantity) => Ok(Response::new(GetTotalBalanceResponse { quantity })),
-            Err(e) => Err(Status::failed_precondition(e)),
+            Err(e) => Err(e.to_status()),
         }
     }
 }

@@ -1,6 +1,6 @@
 use tokio::net::TcpListener;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Channel, Server};
 use vertex_engine::{
@@ -9,18 +9,19 @@ use vertex_engine::{
         self, EngineService,
         proto::{
             self, engine_services_client::EngineServicesClient,
-            engine_services_server::EngineServicesServer, user_serivces_client::UserSerivcesClient,
-            user_serivces_server::UserSerivcesServer,
+            engine_services_server::EngineServicesServer, user_services_client::UserServicesClient,
+            user_services_server::UserServicesServer,
         },
     },
     redis::FillPublisher,
 };
 
-async fn setup() -> (UserSerivcesClient<Channel>, EngineServicesClient<Channel>) {
+async fn setup() -> (UserServicesClient<Channel>, EngineServicesClient<Channel>) {
     let engine = EngineWrapper::Core(CoreEngine::new(1, 1));
     let (tx, rx) = mpsc::channel(256);
     let publisher = FillPublisher::new().await;
-    tokio::spawn(grpc::run_engine(rx, engine, publisher));
+    let (fatal_tx, _fatal_rx) = oneshot::channel();
+    tokio::spawn(grpc::run_engine(rx, engine, publisher, fatal_tx));
     let service = EngineService::new(tx);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -28,14 +29,14 @@ async fn setup() -> (UserSerivcesClient<Channel>, EngineServicesClient<Channel>)
 
     tokio::spawn(async move {
         Server::builder()
-            .add_service(UserSerivcesServer::new(service.clone()))
+            .add_service(UserServicesServer::new(service.clone()))
             .add_service(EngineServicesServer::new(service))
             .serve_with_incoming(TcpListenerStream::new(listener))
             .await
             .unwrap();
     });
 
-    let user_client = UserSerivcesClient::connect(format!("http://127.0.0.1:{}", port))
+    let user_client = UserServicesClient::connect(format!("http://127.0.0.1:{}", port))
         .await
         .unwrap();
     let engine_client = EngineServicesClient::connect(format!("http://127.0.0.1:{}", port))
@@ -52,6 +53,7 @@ fn eth_usdc_pair() -> proto::TradingPair {
     }
 }
 
+#[allow(dead_code)]
 fn btc_usdc_pair() -> proto::TradingPair {
     proto::TradingPair {
         base: proto::Asset::Btc as i32,
@@ -73,12 +75,14 @@ fn random_user_id() -> String {
 }
 
 async fn add_funded_user(engine_client: &mut EngineServicesClient<Channel>) -> String {
-    let add_resp = engine_client
-        .add_user(proto::AddUserRequest {})
+    let user_id = uuid::Uuid::new_v4().to_string();
+    engine_client
+        .add_user(proto::AddUserRequest {
+            user_id: user_id.clone(),
+        })
         .await
         .unwrap()
         .into_inner();
-    let user_id = add_resp.user_id;
     engine_client
         .deposit_balance(proto::DepositBalanceRequest {
             user_id: user_id.clone(),
@@ -176,7 +180,29 @@ async fn test_submit_order_on_missing_pair() {
 
     assert!(result.is_err());
     let status = result.unwrap_err();
-    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(status.code(), tonic::Code::NotFound);
+}
+
+#[tokio::test]
+async fn test_submit_order_invalid_price_fails() {
+    let (mut user_client, mut engine_client) = setup().await;
+    add_eth_usdc(&mut engine_client).await;
+
+    let user_id = add_funded_user(&mut engine_client).await;
+
+    let result = user_client
+        .submit_order(proto::SubmitOrderRequest {
+            pair: Some(eth_usdc_pair()),
+            order_type: proto::OrderType::GoodTillCancel as i32,
+            side: proto::Side::Buy as i32,
+            price: 0,
+            quantity: 10,
+            user_id,
+        })
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::InvalidArgument);
 }
 
 #[tokio::test]
@@ -336,18 +362,27 @@ async fn test_get_order_book_empty_pair() {
 #[tokio::test]
 async fn test_add_user_returns_valid_uuid() {
     let (_, mut engine_client) = setup().await;
+    let user_id = uuid::Uuid::new_v4();
     let resp = engine_client
-        .add_user(proto::AddUserRequest {})
+        .add_user(proto::AddUserRequest {
+            user_id: user_id.to_string(),
+        })
         .await
         .unwrap()
         .into_inner();
+    assert!(resp.success);
+    // The engine echoes the client-provided id back.
+    assert_eq!(resp.user_id, user_id.to_string());
     let uid = uuid::Uuid::parse_str(&resp.user_id);
     assert!(uid.is_ok());
 }
 
 async fn add_user(engine_client: &mut EngineServicesClient<Channel>) -> String {
+    let user_id = uuid::Uuid::new_v4().to_string();
     engine_client
-        .add_user(proto::AddUserRequest {})
+        .add_user(proto::AddUserRequest {
+            user_id: user_id.clone(),
+        })
         .await
         .unwrap()
         .into_inner()
@@ -414,6 +449,7 @@ async fn test_withdraw_insufficient_balance_fails() {
         })
         .await;
     assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::FailedPrecondition);
 }
 
 #[tokio::test]
@@ -511,6 +547,7 @@ async fn test_get_balance_missing_user_fails() {
         })
         .await;
     assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
     let result = engine_client
         .get_total_balance(proto::GetTotalBalanceRequest {
             user_id: random_user_id(),
@@ -518,4 +555,56 @@ async fn test_get_balance_missing_user_fails() {
         })
         .await;
     assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+}
+
+#[tokio::test]
+async fn test_deposit_balance_missing_user_fails() {
+    let (_, mut engine_client) = setup().await;
+    let result = engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: random_user_id(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 1000,
+        })
+        .await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().code(), tonic::Code::NotFound);
+}
+
+#[tokio::test]
+async fn test_add_user_idempotent() {
+    let (_, mut engine_client) = setup().await;
+    let user_id = uuid::Uuid::new_v4().to_string();
+
+    let first = engine_client
+        .add_user(proto::AddUserRequest {
+            user_id: user_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(first.success);
+    assert_eq!(first.user_id, user_id);
+
+    // Re-adding the same user is idempotent, not an error.
+    let second = engine_client
+        .add_user(proto::AddUserRequest {
+            user_id: user_id.clone(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(second.success);
+    assert_eq!(second.user_id, user_id);
+
+    // The user's state is usable after the idempotent re-add.
+    engine_client
+        .deposit_balance(proto::DepositBalanceRequest {
+            user_id: user_id.clone(),
+            asset: proto::Asset::Usdc as i32,
+            quantity: 1000,
+        })
+        .await
+        .unwrap();
 }

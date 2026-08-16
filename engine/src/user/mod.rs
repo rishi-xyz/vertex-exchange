@@ -50,7 +50,7 @@ pub struct LockEntry {
 /// use vertex_engine::types::Asset;
 ///
 /// let mut user = User::new(None); // generates random UUID
-/// user.add_balance(Asset::USDC, 10000);
+/// user.add_balance(Asset::USDC, 10000).unwrap();
 /// assert_eq!(user.get_available_balance(&Asset::USDC), 10000);
 ///
 /// user.lock(1, Asset::USDC, 5000).unwrap();
@@ -88,20 +88,24 @@ impl User {
 
     /// Credits the user's balance for the given asset.
     ///
-    /// Called by [`ExchangeEngine::deposit`](crate::engine::ExchangeEngine::deposit)
-    /// when a user deposits funds.
+    /// Called by the engine when a user deposits funds.
     ///
     /// # Arguments
     ///
     /// * `asset` — The asset to credit
     /// * `amount` — Number of units to add
-    pub fn add_balance(&mut self, asset: Asset, amount: Quantity) {
-        *self.balances.entry(asset).or_insert(0) = self
-            .balances
-            .get(&asset)
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(amount);
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if adding `amount` would overflow the balance — the
+    /// deposit is **rejected** rather than silently losing funds.
+    pub fn add_balance(&mut self, asset: Asset, amount: Quantity) -> Result<(), String> {
+        let current = self.balances.get(&asset).copied().unwrap_or(0);
+        let new = current
+            .checked_add(amount)
+            .ok_or_else(|| "Balance overflow".to_string())?;
+        self.balances.insert(asset, new);
+        Ok(())
     }
 
     /// Returns the available (unlocked) balance for the given asset.
@@ -114,12 +118,13 @@ impl User {
     /// * `asset` — The asset to query
     pub fn get_available_balance(&self, asset: &Asset) -> Quantity {
         let total = self.balances.get(asset).copied().unwrap_or(0);
-        let locked: Quantity = self
+        let locked: u64 = self
             .locked_orders
             .values()
             .filter(|e| e.asset == *asset)
-            .map(|e| e.amount)
+            .map(|e| e.amount as u64)
             .sum();
+        let locked = u32::try_from(locked).unwrap_or(u32::MAX);
         total.saturating_sub(locked)
     }
 
@@ -180,11 +185,13 @@ impl User {
 
     /// Returns the total locked amount for the given asset across all orders.
     pub fn get_locked_balance(&self, asset: Asset) -> Quantity {
-        self.locked_orders
+        let locked: u64 = self
+            .locked_orders
             .values()
             .filter(|e| e.asset == asset)
-            .map(|e| e.amount)
-            .sum()
+            .map(|e| e.amount as u64)
+            .sum();
+        u32::try_from(locked).unwrap_or(u32::MAX)
     }
 
     /// Applies a fill to a locked order, settling the trade.
@@ -215,7 +222,7 @@ impl User {
     ) -> Result<(), String> {
         let entry = self
             .locked_orders
-            .get_mut(&order_id)
+            .get_mut(order_id)
             .ok_or("Order not found in locked orders")?;
         if entry.asset != debit_asset {
             return Err(("Locked asset mismatch").into());
@@ -226,11 +233,13 @@ impl User {
         }
         entry.amount -= debit_amount;
         if entry.amount == 0 {
-            self.locked_orders.remove(&order_id);
+            self.locked_orders.remove(order_id);
         }
         let credit = self.balances.get(&credit_asset).copied().unwrap_or(0);
-        self.balances
-            .insert(credit_asset, credit.saturating_add(credit_amount));
+        let new_credit = credit
+            .checked_add(credit_amount)
+            .ok_or_else(|| "Balance overflow on fill credit".to_string())?;
+        self.balances.insert(credit_asset, new_credit);
         Ok(())
     }
 

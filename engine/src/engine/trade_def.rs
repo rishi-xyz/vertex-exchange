@@ -7,7 +7,7 @@ use crate::{
     orderbook::OrderBook,
     trade::Trades,
     trading_pair::TradingPair,
-    types::{Asset, OrderError, OrderId, Quantity, UserId},
+    types::{Asset, OrderError, OrderId, Quantity, UserError, UserId},
 };
 
 pub trait ExchangeEngine {
@@ -30,19 +30,19 @@ pub trait ExchangeEngine {
 
 pub trait UsersEngine {
     fn add_user(&mut self, user_id: UserId);
-    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, String>;
+    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, UserError>;
     fn deposit_balance(
         &mut self,
         user_id: UserId,
         asset: Asset,
         quantity: Quantity,
-    ) -> Result<(), String>;
+    ) -> Result<(), UserError>;
     fn withdraw_balance(
         &mut self,
         user_id: UserId,
         asset: Asset,
         quantity: Quantity,
-    ) -> Result<(), String>;
-    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String>;
-    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String>;
+    ) -> Result<(), UserError>;
+    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, UserError>;
+    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, UserError>;
 }

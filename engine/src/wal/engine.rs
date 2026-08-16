@@ -5,7 +5,7 @@ use crate::{
         CoreEngine,
         trade_def::{ExchangeEngine, UsersEngine},
     },
-    types::{Asset, OrderError, OrderId, Quantity, WalEntryType},
+    types::{Asset, OrderError, OrderId, Quantity, UserError, WalEntryType},
     wal::{WalEntry, WalReader, WalWriter},
 };
 
@@ -235,7 +235,7 @@ impl UsersEngine for WalEngine {
     fn remove_user(
         &mut self,
         user_id: crate::types::UserId,
-    ) -> Result<HashMap<Asset, Quantity>, String> {
+    ) -> Result<HashMap<Asset, Quantity>, UserError> {
         let entry = WalEntry::new(0, WalEntryType::RemoveUser { user_id });
         self.writer.write(entry).unwrap();
         self.inner.remove_user(user_id)
@@ -246,7 +246,7 @@ impl UsersEngine for WalEngine {
         user_id: crate::types::UserId,
         asset: crate::types::Asset,
         quantity: crate::types::Quantity,
-    ) -> Result<(), String> {
+    ) -> Result<(), UserError> {
         let entry = WalEntry::new(
             0,
             WalEntryType::DepositBalance {
@@ -264,7 +264,7 @@ impl UsersEngine for WalEngine {
         user_id: crate::types::UserId,
         asset: crate::types::Asset,
         quantity: crate::types::Quantity,
-    ) -> Result<(), String> {
+    ) -> Result<(), UserError> {
         let entry = WalEntry::new(
             0,
             WalEntryType::WithdrawBalance {
@@ -277,7 +277,11 @@ impl UsersEngine for WalEngine {
         self.inner.withdraw_balance(user_id, asset, quantity)
     }
 
-    fn get_balance(&self, user_id: crate::types::UserId, asset: Asset) -> Result<Quantity, String> {
+    fn get_balance(
+        &self,
+        user_id: crate::types::UserId,
+        asset: Asset,
+    ) -> Result<Quantity, UserError> {
         self.inner.get_balance(user_id, asset)
     }
 
@@ -285,7 +289,7 @@ impl UsersEngine for WalEngine {
         &self,
         user_id: crate::types::UserId,
         asset: Asset,
-    ) -> Result<Quantity, String> {
+    ) -> Result<Quantity, UserError> {
         self.inner.get_total_balance(user_id, asset)
     }
 }

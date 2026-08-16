@@ -71,7 +71,15 @@ impl OrderBook {
             orders_map,
         }
     }
+}
 
+impl Default for OrderBook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OrderBook {
     /// Checks whether an incoming order can potentially match at the given price.
     ///
     /// - **Buy**: can match if `price >= best_ask`

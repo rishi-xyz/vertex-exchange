@@ -1,6 +1,6 @@
 mod helpers;
 
-use vertex_engine::types::Asset;
+use vertex_engine::types::{Asset, Quantity};
 use vertex_engine::user::User;
 
 use helpers::make_user_id;
@@ -22,36 +22,45 @@ fn new_with_some_uses_provided_uuid() {
 #[test]
 fn add_balance_credits() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     assert_eq!(user.get_balance(&Asset::USDC), 10000);
 }
 
 #[test]
 fn add_balance_accumulates() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 1000);
-    user.add_balance(Asset::USDC, 2000);
+    user.add_balance(Asset::USDC, 1000).unwrap();
+    user.add_balance(Asset::USDC, 2000).unwrap();
     assert_eq!(user.get_balance(&Asset::USDC), 3000);
+}
+
+#[test]
+fn add_balance_rejects_overflow_and_leaves_balance_unchanged() {
+    let mut user = User::new(None);
+    let big: Quantity = u32::MAX;
+    user.add_balance(Asset::USDC, big).unwrap();
+    assert!(user.add_balance(Asset::USDC, 1).is_err());
+    assert_eq!(user.get_balance(&Asset::USDC), big);
 }
 
 #[test]
 fn get_balance_returns_total() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     assert_eq!(user.get_balance(&Asset::USDC), 5000);
 }
 
 #[test]
 fn available_balance_no_locks_equals_total() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     assert_eq!(user.get_available_balance(&Asset::USDC), 5000);
 }
 
 #[test]
 fn available_balance_after_lock_reduces() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     user.lock(1, Asset::USDC, 2000).unwrap();
     assert_eq!(user.get_available_balance(&Asset::USDC), 3000);
     assert_eq!(user.get_balance(&Asset::USDC), 5000);
@@ -60,7 +69,7 @@ fn available_balance_after_lock_reduces() {
 #[test]
 fn available_balance_multiple_locks_accumulate() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 2000).unwrap();
     user.lock(2, Asset::USDC, 3000).unwrap();
     assert_eq!(user.get_available_balance(&Asset::USDC), 5000);
@@ -75,7 +84,7 @@ fn available_balance_unknown_asset_returns_zero() {
 #[test]
 fn lock_success() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     assert!(user.lock(1, Asset::USDC, 2000).is_ok());
     assert_eq!(user.get_locked_balance(Asset::USDC), 2000);
 }
@@ -83,7 +92,7 @@ fn lock_success() {
 #[test]
 fn lock_insufficient_balance_errs() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 100);
+    user.add_balance(Asset::USDC, 100).unwrap();
     let result = user.lock(1, Asset::USDC, 200);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), "Insufficient balance");
@@ -92,7 +101,7 @@ fn lock_insufficient_balance_errs() {
 #[test]
 fn lock_exact_available_succeeds() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     assert!(user.lock(1, Asset::USDC, 5000).is_ok());
     assert_eq!(user.get_available_balance(&Asset::USDC), 0);
 }
@@ -100,7 +109,7 @@ fn lock_exact_available_succeeds() {
 #[test]
 fn lock_zero_amount() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     assert!(user.lock(1, Asset::USDC, 0).is_ok());
     assert_eq!(user.get_available_balance(&Asset::USDC), 5000);
 }
@@ -108,7 +117,7 @@ fn lock_zero_amount() {
 #[test]
 fn lock_same_order_id_overwrites() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 2000).unwrap();
     user.lock(1, Asset::USDC, 3000).unwrap();
     assert_eq!(user.get_locked_balance(Asset::USDC), 3000);
@@ -117,7 +126,7 @@ fn lock_same_order_id_overwrites() {
 #[test]
 fn unlock_order_success_restores_balance() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     user.lock(1, Asset::USDC, 2000).unwrap();
     assert_eq!(user.get_available_balance(&Asset::USDC), 3000);
     user.unlock_order(&1).unwrap();
@@ -136,7 +145,7 @@ fn unlock_order_not_found_errs() {
 #[test]
 fn get_locked_balance_sums_all_locks() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 1000).unwrap();
     user.lock(2, Asset::USDC, 2000).unwrap();
     user.lock(3, Asset::USDC, 3000).unwrap();
@@ -152,8 +161,8 @@ fn get_locked_balance_no_locks_zero() {
 #[test]
 fn apply_fill_partial_reduces_lock_credits_received() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
-    user.add_balance(Asset::ETH, 0);
+    user.add_balance(Asset::USDC, 10000).unwrap();
+    user.add_balance(Asset::ETH, 0).unwrap();
     user.lock(1, Asset::USDC, 5000).unwrap();
     user.apply_fill(&1, Asset::USDC, 2000, Asset::ETH, 1)
         .unwrap();
@@ -164,8 +173,8 @@ fn apply_fill_partial_reduces_lock_credits_received() {
 #[test]
 fn apply_fill_full_removes_lock_entry() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
-    user.add_balance(Asset::ETH, 0);
+    user.add_balance(Asset::USDC, 10000).unwrap();
+    user.add_balance(Asset::ETH, 0).unwrap();
     user.lock(1, Asset::USDC, 5000).unwrap();
     user.apply_fill(&1, Asset::USDC, 5000, Asset::ETH, 5)
         .unwrap();
@@ -176,7 +185,7 @@ fn apply_fill_full_removes_lock_entry() {
 #[test]
 fn apply_fill_wrong_asset_errs() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 5000).unwrap();
     let result = user.apply_fill(&1, Asset::ETH, 2000, Asset::USDC, 1);
     assert!(result.is_err());
@@ -186,7 +195,7 @@ fn apply_fill_wrong_asset_errs() {
 #[test]
 fn apply_fill_insufficient_locked_errs() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 1000).unwrap();
     let result = user.apply_fill(&1, Asset::USDC, 2000, Asset::ETH, 1);
     assert!(result.is_err());
@@ -196,7 +205,7 @@ fn apply_fill_insufficient_locked_errs() {
 #[test]
 fn substract_balance_success() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.substract_balance(Asset::USDC, 3000).unwrap();
     assert_eq!(user.get_balance(&Asset::USDC), 7000);
 }
@@ -204,7 +213,7 @@ fn substract_balance_success() {
 #[test]
 fn substract_balance_insufficient_errs() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 1000);
+    user.add_balance(Asset::USDC, 1000).unwrap();
     let result = user.substract_balance(Asset::USDC, 2000);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), "Insufficient Balance");
@@ -213,7 +222,7 @@ fn substract_balance_insufficient_errs() {
 #[test]
 fn substract_balance_exact() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 5000);
+    user.add_balance(Asset::USDC, 5000).unwrap();
     user.substract_balance(Asset::USDC, 5000).unwrap();
     assert_eq!(user.get_balance(&Asset::USDC), 0);
 }
@@ -221,7 +230,7 @@ fn substract_balance_exact() {
 #[test]
 fn substract_balance_respects_locked_funds() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 4000).unwrap();
     let result = user.substract_balance(Asset::USDC, 8000);
     assert!(result.is_err());
@@ -231,9 +240,9 @@ fn substract_balance_respects_locked_funds() {
 #[test]
 fn get_all_balances_returns_all() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
-    user.add_balance(Asset::ETH, 5);
-    user.add_balance(Asset::BTC, 1);
+    user.add_balance(Asset::USDC, 10000).unwrap();
+    user.add_balance(Asset::ETH, 5).unwrap();
+    user.add_balance(Asset::BTC, 1).unwrap();
     let balances = user.get_all_balances();
     assert_eq!(balances.get(&Asset::USDC), Some(&10000));
     assert_eq!(balances.get(&Asset::ETH), Some(&5));
@@ -243,7 +252,7 @@ fn get_all_balances_returns_all() {
 #[test]
 fn get_all_balances_includes_locked() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 3000).unwrap();
     let balances = user.get_all_balances();
     assert_eq!(balances.get(&Asset::USDC), Some(&10000));
@@ -252,7 +261,7 @@ fn get_all_balances_includes_locked() {
 #[test]
 fn get_all_locked_balances_returns_locks() {
     let mut user = User::new(None);
-    user.add_balance(Asset::USDC, 10000);
+    user.add_balance(Asset::USDC, 10000).unwrap();
     user.lock(1, Asset::USDC, 2000).unwrap();
     user.lock(2, Asset::USDC, 3000).unwrap();
     let locks = user.get_all_locked_balances();

@@ -12,7 +12,7 @@ use crate::{
     snowflake_id::SnowFlakeGenerator,
     trade::Trades,
     trading_pair::TradingPair,
-    types::{Asset, OrderError, OrderId, OrderType, Price, Quantity, Side, UserId},
+    types::{Asset, OrderError, OrderId, OrderType, Price, Quantity, Side, UserError, UserId},
     user::User,
     wal::engine::WalEngine,
 };
@@ -62,7 +62,10 @@ impl CoreEngine {
         quantity: Quantity,
     ) -> Result<(Asset, Quantity), OrderError> {
         match side {
-            Side::Buy => Ok((pair.quote, Self::notional(price, quantity).ok_or(OrderError::InvalidOrder)?)),
+            Side::Buy => Ok((
+                pair.quote,
+                Self::notional(price, quantity).ok_or(OrderError::InvalidOrder)?,
+            )),
             Side::Sell => Ok((pair.base, quantity)),
         }
     }
@@ -72,37 +75,67 @@ impl CoreEngine {
     /// The buyer pays `quantity * exec_price` of the quote asset and receives the
     /// base asset; the seller does the inverse. `Trade` records a single execution
     /// price per fill (the resting/maker price), so the notional is conserved.
+    ///
+    /// A settlement failure is an invariant violation — fills are derived from
+    /// locked, validated balances, so it can never legitimately fail. Violations
+    /// panic (fail-fast) rather than silently skipping a fill's balance effects;
+    /// the engine shutdown that follows is caught by the gRPC layer and, in WAL
+    /// mode, state is restored from the log on restart.
     fn settle_trades(users: &mut HashMap<UserId, User>, pair: &TradingPair, trades: &Trades) {
         for trade in trades {
             let bid = trade.get_bid_trade_info();
             let ask = trade.get_ask_trade_info();
             let exec_price: Price = bid.get_price();
             let quantity: Quantity = bid.get_quantity();
-            let notional: Quantity = match (exec_price as u64).checked_mul(quantity as u64).and_then(|v| u32::try_from(v).ok()) {
-                Some(v) => v,
-                None => {
-                    tracing::error!(
-                        %pair,
-                        exec_price,
-                        quantity,
-                        "fill notional overflow during settlement; skipping"
-                    );
-                    continue;
-                }
-            };
+            let notional: Quantity = (exec_price as u64)
+                .checked_mul(quantity as u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "fill notional overflow during settlement for {pair} (price={exec_price}, qty={quantity})"
+                    )
+                });
 
-            if let Some(Err(e)) = users
+            users
                 .get_mut(&bid.get_user_id())
-                .map(|u| u.apply_fill(&bid.get_order_id(), pair.quote, notional, pair.base, quantity))
-            {
-                tracing::warn!(%pair, user_id = %bid.get_user_id(), "buyer fill settlement failed: {e}");
-            }
-            if let Some(Err(e)) = users
+                .unwrap_or_else(|| {
+                    panic!("settlement: buyer {} missing from users", bid.get_user_id())
+                })
+                .apply_fill(
+                    &bid.get_order_id(),
+                    pair.quote,
+                    notional,
+                    pair.base,
+                    quantity,
+                )
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "buyer fill settlement failed for order {}: {e}",
+                        bid.get_order_id()
+                    )
+                });
+
+            users
                 .get_mut(&ask.get_user_id())
-                .map(|u| u.apply_fill(&ask.get_order_id(), pair.base, quantity, pair.quote, notional))
-            {
-                tracing::warn!(%pair, user_id = %ask.get_user_id(), "seller fill settlement failed: {e}");
-            }
+                .unwrap_or_else(|| {
+                    panic!(
+                        "settlement: seller {} missing from users",
+                        ask.get_user_id()
+                    )
+                })
+                .apply_fill(
+                    &ask.get_order_id(),
+                    pair.base,
+                    quantity,
+                    pair.quote,
+                    notional,
+                )
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "seller fill settlement failed for order {}: {e}",
+                        ask.get_order_id()
+                    )
+                });
         }
     }
 }
@@ -111,7 +144,7 @@ impl ExchangeEngine for CoreEngine {
     // create orderbook
     fn add_trading_pair(&mut self, pair: TradingPair) {
         tracing::debug!(%pair, "add_trading_pair");
-        self.orderbooks.entry(pair).or_insert(OrderBook::new());
+        self.orderbooks.entry(pair).or_default();
     }
 
     fn remove_trading_pair(&mut self, pair: &TradingPair) -> Option<OrderBook> {
@@ -133,7 +166,10 @@ impl ExchangeEngine for CoreEngine {
         tracing::debug!(%pair, order_id = order.get_order_id(), price = order.get_price(), quantity = order.get_remaining_quantity(), side = ?order.get_side(), "add_order");
         Self::validate_order(order.get_price(), order.get_initial_quantity())?;
 
-        let book = self.orderbooks.get_mut(pair).ok_or(OrderError::NoSuchPair)?;
+        let book = self
+            .orderbooks
+            .get_mut(pair)
+            .ok_or(OrderError::NoSuchPair)?;
         if book.has_order(&order.get_order_id()) {
             return Err(OrderError::InvalidOrder);
         }
@@ -199,7 +235,10 @@ impl ExchangeEngine for CoreEngine {
         tracing::debug!(%pair, order_id = modify_order.get_order_id(), "modify_order");
         Self::validate_order(modify_order.get_price(), modify_order.get_quantity())?;
 
-        let book = self.orderbooks.get_mut(pair).ok_or(OrderError::NoSuchPair)?;
+        let book = self
+            .orderbooks
+            .get_mut(pair)
+            .ok_or(OrderError::NoSuchPair)?;
         let old = book
             .get_order(&modify_order.get_order_id())
             .ok_or(OrderError::InvalidOrder)?;
@@ -297,7 +336,7 @@ impl UsersEngine for CoreEngine {
             .or_insert(User::new(Some(user_id)));
     }
 
-    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, String> {
+    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, UserError> {
         tracing::debug!(%user_id, "remove_user");
         // cancel all orders for this user across all orderbooks
         for book in self.orderbooks.values_mut() {
@@ -310,7 +349,7 @@ impl UsersEngine for CoreEngine {
             }
         }
         // Remove user and return final balances snapshots
-        let user = self.users.remove(&user_id).ok_or("User not found")?;
+        let user = self.users.remove(&user_id).ok_or(UserError::NoSuchUser)?;
         Ok(user.get_all_balances().clone())
     }
 
@@ -319,10 +358,11 @@ impl UsersEngine for CoreEngine {
         user_id: UserId,
         asset: Asset,
         quantity: Quantity,
-    ) -> Result<(), String> {
+    ) -> Result<(), UserError> {
         tracing::debug!(%user_id, ?asset, quantity, "deposit_balance");
-        let user = self.users.get_mut(&user_id).ok_or("User not found")?;
-        user.add_balance(asset, quantity);
+        let user = self.users.get_mut(&user_id).ok_or(UserError::NoSuchUser)?;
+        user.add_balance(asset, quantity)
+            .map_err(|_| UserError::BalanceOverflow)?;
         Ok(())
     }
 
@@ -331,19 +371,21 @@ impl UsersEngine for CoreEngine {
         user_id: UserId,
         asset: Asset,
         quantity: Quantity,
-    ) -> Result<(), String> {
+    ) -> Result<(), UserError> {
         tracing::debug!(%user_id, ?asset, quantity, "withdraw_balance");
-        let user = self.users.get_mut(&user_id).ok_or("User not found")?;
+        let user = self.users.get_mut(&user_id).ok_or(UserError::NoSuchUser)?;
         user.substract_balance(asset, quantity)
+            .map_err(|_| UserError::InsufficientBalance)?;
+        Ok(())
     }
 
-    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String> {
-        let user = self.users.get(&user_id).ok_or("User not found")?;
+    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, UserError> {
+        let user = self.users.get(&user_id).ok_or(UserError::NoSuchUser)?;
         Ok(user.get_available_balance(&asset))
     }
 
-    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String> {
-        let user = self.users.get(&user_id).ok_or("User not found")?;
+    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, UserError> {
+        let user = self.users.get(&user_id).ok_or(UserError::NoSuchUser)?;
         Ok(user.get_balance(&asset))
     }
 }
@@ -429,7 +471,7 @@ impl UsersEngine for EngineWrapper {
         }
     }
 
-    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, String> {
+    fn remove_user(&mut self, user_id: UserId) -> Result<HashMap<Asset, Quantity>, UserError> {
         match self {
             EngineWrapper::Core(e) => e.remove_user(user_id),
             EngineWrapper::Wal(e) => e.remove_user(user_id),
@@ -441,7 +483,7 @@ impl UsersEngine for EngineWrapper {
         user_id: UserId,
         asset: Asset,
         quantity: Quantity,
-    ) -> Result<(), String> {
+    ) -> Result<(), UserError> {
         match self {
             EngineWrapper::Core(e) => e.deposit_balance(user_id, asset, quantity),
             EngineWrapper::Wal(e) => e.deposit_balance(user_id, asset, quantity),
@@ -453,21 +495,21 @@ impl UsersEngine for EngineWrapper {
         user_id: UserId,
         asset: Asset,
         quantity: Quantity,
-    ) -> Result<(), String> {
+    ) -> Result<(), UserError> {
         match self {
             EngineWrapper::Core(e) => e.withdraw_balance(user_id, asset, quantity),
             EngineWrapper::Wal(e) => e.withdraw_balance(user_id, asset, quantity),
         }
     }
 
-    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String> {
+    fn get_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, UserError> {
         match self {
             EngineWrapper::Core(e) => e.get_balance(user_id, asset),
             EngineWrapper::Wal(e) => e.get_balance(user_id, asset),
         }
     }
 
-    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, String> {
+    fn get_total_balance(&self, user_id: UserId, asset: Asset) -> Result<Quantity, UserError> {
         match self {
             EngineWrapper::Core(e) => e.get_total_balance(user_id, asset),
             EngineWrapper::Wal(e) => e.get_total_balance(user_id, asset),
@@ -486,6 +528,6 @@ pub fn engine_from_env(machine_id: u64, datacenter_id: u64) -> EngineWrapper {
                 .expect("Failed to initialize WAL engine"),
         )
     } else {
-        EngineWrapper::Core(CoreEngine::new(1, 1))
+        EngineWrapper::Core(CoreEngine::new(machine_id, datacenter_id))
     }
 }
