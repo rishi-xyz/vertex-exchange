@@ -43,11 +43,11 @@ pub type LevelInfos = VecDeque<LevelInfo>;
 
 /// A full orderbook depth snapshot — bids and asks at each price level.
 ///
-/// Bids are sorted ascending by price (best bid last); asks are sorted
-/// ascending by price (best ask first).
+/// Both sides are ordered **best-first**: bids descending by price (best bid
+/// first), asks ascending by price (best ask first).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderBookLevelInfo {
-    /// Bid levels, sorted ascending by price (best bid is the last element)
+    /// Bid levels, sorted descending by price (best bid is the first element)
     bids: LevelInfos,
     /// Ask levels, sorted ascending by price (best ask is the first element)
     asks: LevelInfos,
@@ -58,18 +58,18 @@ impl OrderBookLevelInfo {
     ///
     /// # Arguments
     ///
-    /// * `bids` — Bid price levels (ascending by price)
-    /// * `asks` — Ask price levels (ascending by price)
+    /// * `bids` — Bid price levels (descending by price, best first)
+    /// * `asks` — Ask price levels (ascending by price, best first)
     pub fn new(bids: LevelInfos, asks: LevelInfos) -> Self {
         OrderBookLevelInfo { bids, asks }
     }
 
-    /// Returns a reference to the bid levels (ascending by price; best bid is last).
+    /// Returns a reference to the bid levels (descending by price; best bid first).
     pub fn get_bids(&self) -> &LevelInfos {
         &self.bids
     }
 
-    /// Returns a reference to the ask levels (ascending by price; best ask is first).
+    /// Returns a reference to the ask levels (ascending by price; best ask first).
     pub fn get_asks(&self) -> &LevelInfos {
         &self.asks
     }
