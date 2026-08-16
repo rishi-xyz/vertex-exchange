@@ -155,21 +155,43 @@ impl OrderBook {
 
                 let initial_bids_len = bids.len();
                 let initial_asks_len = asks.len();
-                let mut skipped = 0;
+                // Rotations of the opposite-side front order before advancing the
+                // same-side front. When every opposite order at this level is a
+                // self-trade for the current front, this reaches the level length.
+                let mut opposite_skipped = 0;
+                // Total times the same-side front has been rotated aside at this
+                // level. Bounded by `initial_same_len - 1` so every same-side
+                // order gets a turn at the front exactly once.
+                let mut same_side_rotations = 0;
                 let mut all_self_trade = false;
 
-                while bids.len() != 0 && asks.len() != 0 {
+                while !bids.is_empty() && !asks.is_empty() {
                     let bid = bids.front_mut().unwrap();
                     let ask = asks.front_mut().unwrap();
 
-                    // Self-trade: rotate the resting order to the back and skip
+                    // Self-trade: rotate a resting order to the back and skip
                     if bid.get_user_id() == ask.get_user_id() {
+                        // Rotate the opposite-side order aside, preserving same-side FIFO.
                         match aggressor_side {
                             Side::Buy => {
                                 let resting_order = asks.pop_front().unwrap();
                                 asks.push_back(resting_order);
-                                skipped += 1;
-                                if skipped >= initial_asks_len {
+                                opposite_skipped += 1;
+                                // The current front order can now only match
+                                // self-trades at this level. If another user's
+                                // order is buried behind it on the same side,
+                                // rotate the same-side front aside so that order
+                                // can match instead of dropping the whole level.
+                                if opposite_skipped >= initial_asks_len
+                                    && same_side_rotations + 1 < initial_bids_len
+                                {
+                                    let same_order = bids.pop_front().unwrap();
+                                    bids.push_back(same_order);
+                                    same_side_rotations += 1;
+                                    opposite_skipped = 0;
+                                    continue;
+                                }
+                                if opposite_skipped >= initial_asks_len {
                                     all_self_trade = true;
                                     break;
                                 }
@@ -177,8 +199,17 @@ impl OrderBook {
                             Side::Sell => {
                                 let resting_order = bids.pop_front().unwrap();
                                 bids.push_back(resting_order);
-                                skipped += 1;
-                                if skipped >= initial_bids_len {
+                                opposite_skipped += 1;
+                                if opposite_skipped >= initial_bids_len
+                                    && same_side_rotations + 1 < initial_asks_len
+                                {
+                                    let same_order = asks.pop_front().unwrap();
+                                    asks.push_back(same_order);
+                                    same_side_rotations += 1;
+                                    opposite_skipped = 0;
+                                    continue;
+                                }
+                                if opposite_skipped >= initial_bids_len {
                                     all_self_trade = true;
                                     break;
                                 }
@@ -240,18 +271,10 @@ impl OrderBook {
             }
 
             // Remove empty price levels
-            if self
-                .bids_map
-                .get(&bid_price)
-                .map_or(false, |q| q.is_empty())
-            {
+            if self.bids_map.get(&bid_price).is_some_and(|q| q.is_empty()) {
                 self.bids_map.remove(&bid_price);
             }
-            if self
-                .asks_map
-                .get(&ask_price)
-                .map_or(false, |q| q.is_empty())
-            {
+            if self.asks_map.get(&ask_price).is_some_and(|q| q.is_empty()) {
                 self.asks_map.remove(&ask_price);
             }
         }

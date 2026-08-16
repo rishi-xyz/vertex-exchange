@@ -451,6 +451,65 @@ fn aggressor_side_determines_rotation_direction() {
     assert_eq!(book.size(), 2);
 }
 
+#[test]
+fn self_trade_does_not_hide_other_users_buried_same_side_order() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+    let uid_x = uid_a();
+    let uid_y = uid_b();
+
+    // X's sell at 50000 — the only resting ask at the level
+    let sell_x = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 10, uid_x);
+    book.add_order(&sell_x, &mut generator);
+
+    // X's buy sits in front at the same price (FIFO)
+    let buy_x = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 5, uid_x);
+    book.add_order(&buy_x, &mut generator);
+
+    // Y's buy is buried behind X's buy at the same price
+    let buy_y = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 5, uid_y);
+    book.add_order(&buy_y, &mut generator);
+
+    // Y aggressively buys 5 at 50000. The front bid (X's) only has
+    // self-trades at the level, but Y's buried bid can match X's sell.
+    let buy_y2 = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 5, uid_y);
+    let trades = book.add_order(&buy_y2, &mut generator).unwrap();
+
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].get_bid_trade_info().get_user_id(), uid_y);
+    assert_eq!(trades[0].get_ask_trade_info().get_user_id(), uid_x);
+    // Only X's unfillable buy remains; the level was not dropped.
+    assert_eq!(book.size(), 1);
+    assert!(book.has_order(&buy_x.get_order_id()));
+}
+
+#[test]
+fn self_trade_does_not_hide_other_users_buried_same_side_order_sell() {
+    let mut book = new_book();
+    let mut generator = make_generator();
+    let uid_x = uid_a();
+    let uid_y = uid_b();
+
+    let buy_x = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_x);
+    book.add_order(&buy_x, &mut generator);
+
+    let sell_x = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 5, uid_x);
+    book.add_order(&sell_x, &mut generator);
+
+    let sell_y = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 5, uid_y);
+    book.add_order(&sell_y, &mut generator);
+
+    let sell_y2 = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 5, uid_y);
+    let trades = book.add_order(&sell_y2, &mut generator).unwrap();
+
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].get_bid_trade_info().get_user_id(), uid_x);
+    assert_eq!(trades[0].get_ask_trade_info().get_user_id(), uid_y);
+    // Only X's unfillable sell remains; the level was not dropped.
+    assert_eq!(book.size(), 1);
+    assert!(book.has_order(&sell_x.get_order_id()));
+}
+
 // ========== FillAndKill (FAK) ==========
 
 #[test]
