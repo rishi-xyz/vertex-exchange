@@ -64,3 +64,43 @@ func (s *Store) getUser(ctx context.Context, query string, arg any) (*User, erro
 	}
 	return &u, nil
 }
+
+type Order struct {
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	Pair          string
+	Side          string
+	Type          string
+	Price         int64
+	Quantity      int64
+	Remaining     int64
+	Status        string
+	EngineOrderID int64
+	CreatedAt     time.Time
+}
+
+func (s *Store) CreateOrder(ctx context.Context, userID uuid.UUID, pair, side, orderType string,
+	price int32, quantity uint32, engineOrderID int64) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO orders (user_id, pair, side, order_type, price, quantity, remaining, status, engine_order_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $6, 'Empty', $7) RETURNING id`,
+		userID, pair, side, orderType, price, quantity, engineOrderID,
+	).Scan(&id)
+	return id, err
+}
+
+func (s *Store) GetOrderByID(ctx context.Context, id uuid.UUID) (*Order, error) {
+	var o Order
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, user_id, pair, side, order_type, price, quantity, remaining, status, engine_order_id, created_at
+		 FROM orders WHERE id = $1`, id,
+	).Scan(&o.ID, &o.UserID, &o.Pair, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Remaining, &o.Status, &o.EngineOrderID, &o.CreatedAt)
+	if err == pgx.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}

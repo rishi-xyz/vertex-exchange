@@ -50,6 +50,16 @@ func (s *Server) Router() http.Handler {
 		r.Post("/login", s.handleLogin)
 		r.With(s.authenticate).Get("/me", s.handleMe)
 	})
+	r.Route("/users", func(r chi.Router) {
+		r.Post("/{id}/deposit", s.handleDeposit)
+	})
+	r.Route("/orders", func(r chi.Router) {
+		r.Use(s.authenticate)
+		r.Post("/", s.handleSubmitOrder)
+		r.Get("/{id}", s.handleGetOrder)
+	})
+	r.With(s.authenticate).Get("/balances", s.handleBalances)
+	r.Get("/orderbook/{pair}", s.handleGetOrderBook)
 	return r
 }
 
