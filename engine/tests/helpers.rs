@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use uuid::Uuid;

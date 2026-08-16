@@ -619,7 +619,7 @@ impl OrderBook {
 
     /// Returns the total number of resting orders in the book.
     pub fn size(&self) -> usize {
-        return self.orders_map.len();
+        self.orders_map.len()
     }
 
     /// Returns `true` if an order with the given ID exists in the book.

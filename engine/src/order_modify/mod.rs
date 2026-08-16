@@ -85,32 +85,32 @@ impl OrderModify {
 
     /// Returns the ID of the order to be replaced.
     pub fn get_order_id(&self) -> OrderId {
-        return self.order_id;
+        self.order_id
     }
 
     /// Returns the new limit price.
     pub fn get_price(&self) -> Price {
-        return self.price;
+        self.price
     }
 
     /// Returns the new side.
     pub fn get_side(&self) -> Side {
-        return self.side;
+        self.side
     }
 
     /// Returns the new quantity.
     pub fn get_quantity(&self) -> Quantity {
-        return self.quantity;
+        self.quantity
     }
 
     /// Returns the initial status for the replacement order.
     pub fn get_status(&self) -> OrderStatus {
-        return self.status;
+        self.status
     }
 
     /// Returns the user who owns this order.
     pub fn get_user_id(&self) -> UserId {
-        return self.user_id;
+        self.user_id
     }
 
     /// Converts this modification request into a new [`Order`] pointer.

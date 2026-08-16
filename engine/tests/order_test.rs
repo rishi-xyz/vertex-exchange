@@ -72,8 +72,8 @@ fn zero_fill_succeeds_remaining_unchanged() {
     let mut order = make_order(OrderType::GoodTillCancel, Side::Buy, 100, 10, uid);
     order.fills(0).unwrap();
     assert_eq!(order.get_remaining_quantity(), 10);
-    // Note: engine sets PartiallyFilled for any fills() call, even with qty=0
-    assert_eq!(order.get_status(), OrderStatus::PartiallyFilled);
+    // A zero fill is a no-op: status must not be marked as filled/partial
+    assert_eq!(order.get_status(), OrderStatus::Empty);
 }
 
 #[test]

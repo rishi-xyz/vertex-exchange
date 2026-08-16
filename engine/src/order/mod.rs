@@ -118,51 +118,51 @@ impl Order {
 
     /// Returns the snowflake order ID.
     pub fn get_order_id(&self) -> OrderId {
-        return self.order_id;
+        self.order_id
     }
 
     /// Returns the order type ([`GoodTillCancel`](OrderType::GoodTillCancel), [`FillAndKill`](OrderType::FillAndKill), etc.)
     pub fn get_type(&self) -> OrderType {
-        return self.order_type;
+        self.order_type
     }
 
     /// Returns which side of the trade this order is on.
     pub fn get_side(&self) -> Side {
-        return self.side;
+        self.side
     }
 
     /// Returns the current lifecycle status of the order.
     pub fn get_status(&self) -> OrderStatus {
-        return self.status;
+        self.status
     }
 
     /// Returns the limit price in quote units.
     pub fn get_price(&self) -> Price {
-        return self.price;
+        self.price
     }
 
     /// Returns the original quantity when the order was created.
     pub fn get_initial_quantity(&self) -> Quantity {
-        return self.initial_quantity;
+        self.initial_quantity
     }
 
     /// Returns the quantity yet to be matched.
     ///
     /// Decreases as fills occur. When this reaches `0`, the order is fully filled.
     pub fn get_remaining_quantity(&self) -> Quantity {
-        return self.remaining_quantity;
+        self.remaining_quantity
     }
 
     /// Returns the quantity that has been matched so far.
     ///
     /// Equivalent to `initial_quantity - remaining_quantity`.
     pub fn get_filled_quantity(&self) -> Quantity {
-        return self.initial_quantity - self.remaining_quantity;
+        self.initial_quantity - self.remaining_quantity
     }
 
     /// Returns `true` if order has been fully filled (`remaining_quantity == 0`).
     pub fn is_filled(&self) -> bool {
-        return self.remaining_quantity == 0;
+        self.remaining_quantity == 0
     }
 
     /// Returns the nanosecond epoch timestamp of when this order was created.
@@ -210,6 +210,9 @@ impl Order {
     /// assert_eq!(order.get_status(), OrderStatus::PartiallyFilled);
     /// ```
     pub fn fills(&mut self, quantity: Quantity) -> Result<(), String> {
+        if quantity == 0 {
+            return Ok(());
+        }
         if quantity > self.remaining_quantity {
             tracing::warn!(
                 order_id = self.get_order_id(),

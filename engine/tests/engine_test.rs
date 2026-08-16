@@ -99,13 +99,7 @@ fn add_order_existing_pair_delegates() {
     engine.add_trading_pair(eth_usdc());
     let uid = add_funded_user(&mut engine);
 
-    let order = make_order(
-        OrderType::GoodTillCancel,
-        Side::Buy,
-        50000,
-        10,
-        uid,
-    );
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
     let result = engine.add_order(&eth_usdc(), &order);
     assert!(matches!(result, Ok(Some(_))));
     assert_eq!(engine.size(&eth_usdc()), Some(1));
@@ -117,13 +111,7 @@ fn cancel_order_existing_pair_returns_true() {
     engine.add_trading_pair(eth_usdc());
     let uid = add_funded_user(&mut engine);
 
-    let order = make_order(
-        OrderType::GoodTillCancel,
-        Side::Buy,
-        50000,
-        10,
-        uid,
-    );
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
     let _ = engine.add_order(&eth_usdc(), &order);
     let result = engine.cancel_order(&eth_usdc(), &order.get_order_id());
     assert!(result);

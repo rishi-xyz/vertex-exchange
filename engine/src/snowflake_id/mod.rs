@@ -175,10 +175,10 @@ impl SnowFlakeGenerator {
             self.sequence = 0;
         }
         self.last_timestamp = timestamp;
-        return ((timestamp - EPOCH) << TIMESTAMP_SHIFT)
+        ((timestamp - EPOCH) << TIMESTAMP_SHIFT)
             | (self.datacenter_id << DATACENTER_SHIFT)
             | (self.machine_id << MACHINE_SHIFT)
-            | (self.sequence);
+            | (self.sequence)
     }
 
     /// Returns the current time in milliseconds since the Unix epoch.
