@@ -67,7 +67,13 @@ impl WalEngine {
                 order,
                 trades: _,
             } => {
-                let _ = engine.add_order(pair, order);
+                if let Err(e) = engine.add_order(pair, order) {
+                    tracing::error!(
+                        %pair,
+                        order_id = order.get_order_id(),
+                        "WAL replay: add_order failed: {e:?}"
+                    );
+                }
             }
             WalEntryType::CancelOrder {
                 pair,
@@ -81,27 +87,52 @@ impl WalEngine {
                 modify,
                 trades: _,
             } => {
-                let _ = engine.modify_order(pair, modify.clone());
+                if let Err(e) = engine.modify_order(pair, modify.clone()) {
+                    tracing::error!(
+                        %pair,
+                        order_id = modify.get_order_id(),
+                        "WAL replay: modify_order failed: {e:?}"
+                    );
+                }
             }
             WalEntryType::AddUser { user_id } => {
                 engine.add_user(*user_id);
             }
             WalEntryType::RemoveUser { user_id } => {
-                let _ = engine.remove_user(*user_id);
+                if let Err(e) = engine.remove_user(*user_id) {
+                    tracing::error!(
+                        user_id = %user_id,
+                        "WAL replay: remove_user failed: {e:?}"
+                    );
+                }
             }
             WalEntryType::DepositBalance {
                 user_id,
                 asset,
                 quantity,
             } => {
-                let _ = engine.deposit_balance(*user_id, *asset, *quantity);
+                if let Err(e) = engine.deposit_balance(*user_id, *asset, *quantity) {
+                    tracing::error!(
+                        user_id = %user_id,
+                        ?asset,
+                        quantity,
+                        "WAL replay: deposit_balance failed: {e:?}"
+                    );
+                }
             }
             WalEntryType::WithdrawBalance {
                 user_id,
                 asset,
                 quantity,
             } => {
-                let _ = engine.withdraw_balance(*user_id, *asset, *quantity);
+                if let Err(e) = engine.withdraw_balance(*user_id, *asset, *quantity) {
+                    tracing::error!(
+                        user_id = %user_id,
+                        ?asset,
+                        quantity,
+                        "WAL replay: withdraw_balance failed: {e:?}"
+                    );
+                }
             }
         }
     }
@@ -145,16 +176,22 @@ impl ExchangeEngine for WalEngine {
         pair: &crate::trading_pair::TradingPair,
         order_id: &crate::types::OrderId,
     ) -> bool {
+        // WAL entry is written *after* the in-memory cancel with the actual
+        // outcome. Cancel is idempotent on replay, so a crash before the log
+        // write only resurrects an order whose reply was never delivered —
+        // the client simply retries. This keeps the log truthful: a false
+        // cancel (order not found) is never recorded as a success.
+        let success = self.inner.cancel_order(pair, order_id);
         let entry = WalEntry::new(
             0,
             WalEntryType::CancelOrder {
                 pair: *pair,
                 order_id: *order_id,
-                success: true,
+                success,
             },
         );
         self.writer.write(entry).unwrap();
-        self.inner.cancel_order(pair, order_id)
+        success
     }
 
     fn modify_order(
