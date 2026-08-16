@@ -983,7 +983,7 @@ fn get_order_info_bids_descending_best_first() {
 }
 
 #[test]
-fn get_order_info_asks_descending_best_last() {
+fn get_order_info_asks_ascending_best_first() {
     let mut book = new_book();
     let mut generator = make_generator();
 
@@ -996,10 +996,10 @@ fn get_order_info_asks_descending_best_last() {
 
     let info = book.get_order_info();
     let asks = info.get_asks();
-    // push_front reverses BTreeMap ascending → descending
-    assert_eq!(asks[0].price, 52000);
+    // Asks are sorted ascending by price — best ask first
+    assert_eq!(asks[0].price, 50000);
     assert_eq!(asks[1].price, 51000);
-    assert_eq!(asks[2].price, 50000);
+    assert_eq!(asks[2].price, 52000);
 }
 
 #[test]

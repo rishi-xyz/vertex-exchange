@@ -39,6 +39,21 @@ use crate::{
 use std::cmp::min;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+/// Converts a u64 level quantity back to the engine's `Quantity` (u32),
+/// saturating at `u32::MAX` if a single price level somehow exceeds it.
+fn level_quantity(total: u64) -> Quantity {
+    match u32::try_from(total) {
+        Ok(q) => q,
+        Err(_) => {
+            tracing::warn!(
+                total,
+                "order book level quantity exceeds u32::MAX — clamping"
+            );
+            u32::MAX
+        }
+    }
+}
+
 /// A price-time priority order book for a single trading pair.
 ///
 /// Contains both bid (buy) and ask (sell) sides, plus a flat lookup table
@@ -605,22 +620,25 @@ impl OrderBook {
     }
 
     /// Returns a depth snapshot of the order book.
+    ///
+    /// Both sides are ordered **best-first**: bids descending (highest price
+    /// first), asks ascending (lowest price first).
     pub fn get_order_info(&self) -> OrderBookLevelInfo {
         let mut bids_info = VecDeque::new();
         let mut asks_info = VecDeque::new();
         for (price, orders) in self.bids_map.iter() {
             let total_quantity = orders
                 .iter()
-                .map(|order| order.get_remaining_quantity())
-                .sum();
-            bids_info.push_front(LevelInfo::new(*price, total_quantity));
+                .map(|order| order.get_remaining_quantity() as u64)
+                .sum::<u64>();
+            bids_info.push_front(LevelInfo::new(*price, level_quantity(total_quantity)));
         }
         for (price, orders) in self.asks_map.iter() {
             let total_quantity = orders
                 .iter()
-                .map(|order| order.get_remaining_quantity())
-                .sum();
-            asks_info.push_front(LevelInfo::new(*price, total_quantity));
+                .map(|order| order.get_remaining_quantity() as u64)
+                .sum::<u64>();
+            asks_info.push_back(LevelInfo::new(*price, level_quantity(total_quantity)));
         }
         OrderBookLevelInfo::new(bids_info, asks_info)
     }
