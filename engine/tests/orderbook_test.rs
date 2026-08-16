@@ -4,8 +4,7 @@ use vertex_engine::orderbook::OrderBook;
 use vertex_engine::types::{OrderType, Side};
 
 use helpers::{
-    UserId, make_generator, make_modify, make_order, make_order_with_id, make_user_id,
-    make_user_id_fixed,
+    UserId, make_generator, make_order, make_order_with_id, make_user_id, make_user_id_fixed,
 };
 
 fn new_book() -> OrderBook {
@@ -858,120 +857,6 @@ fn cancel_partially_filled_order() {
     let cancelled = book.cancel_order(&buy.get_order_id());
     assert!(cancelled.is_some());
     assert_eq!(book.size(), 0);
-}
-
-// ========== Modify ==========
-
-#[test]
-fn modify_existing_old_removed_new_added() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-
-    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
-    let id = order.get_order_id();
-    book.add_order(&order, &mut generator);
-
-    let modify = make_modify(id, 51000, Side::Buy, 20, uid_a());
-    book.modify_order(modify, &mut generator);
-
-    assert!(book.has_order(&id));
-    let info = book.get_order_info();
-    assert_eq!(info.get_bids()[0].price, 51000);
-    assert_eq!(info.get_bids()[0].quantity, 20);
-}
-
-#[test]
-fn modify_to_crossing_price_triggers_fill() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-
-    let sell = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 10, uid_b());
-    book.add_order(&sell, &mut generator);
-
-    let buy = make_order(OrderType::GoodTillCancel, Side::Buy, 49000, 10, uid_a());
-    book.add_order(&buy, &mut generator);
-
-    let modify = make_modify(buy.get_order_id(), 50000, Side::Buy, 10, uid_a());
-    let trades = book.modify_order(modify, &mut generator).unwrap();
-    assert_eq!(trades.len(), 1);
-    assert_eq!(book.size(), 0);
-}
-
-#[test]
-fn modify_nonexistent_returns_none() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-
-    let modify = make_modify(999, 50000, Side::Buy, 10, uid_a());
-    let result = book.modify_order(modify, &mut generator);
-    assert!(result.is_none());
-}
-
-#[test]
-fn modify_preserves_order_type() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-
-    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
-    let id = order.get_order_id();
-    book.add_order(&order, &mut generator);
-
-    let modify = make_modify(id, 51000, Side::Buy, 20, uid_a());
-    book.modify_order(modify, &mut generator);
-
-    assert_eq!(book.get_order_type(&id), Some(OrderType::GoodTillCancel));
-}
-
-#[test]
-fn modify_changes_price_and_quantity() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-
-    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
-    let id = order.get_order_id();
-    book.add_order(&order, &mut generator);
-
-    let modify = make_modify(id, 48000, Side::Buy, 25, uid_a());
-    book.modify_order(modify, &mut generator);
-
-    let info = book.get_order_info();
-    assert_eq!(info.get_bids().len(), 1);
-    assert_eq!(info.get_bids()[0].price, 48000);
-    assert_eq!(info.get_bids()[0].quantity, 25);
-}
-
-#[test]
-fn modify_partially_filled_order() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-
-    let sell = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 5, uid_b());
-    book.add_order(&sell, &mut generator);
-
-    let buy = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid_a());
-    book.add_order(&buy, &mut generator);
-
-    let modify = make_modify(buy.get_order_id(), 49000, Side::Buy, 20, uid_a());
-    book.modify_order(modify, &mut generator);
-
-    let info = book.get_order_info();
-    assert_eq!(info.get_bids().len(), 1);
-    assert_eq!(info.get_bids()[0].price, 49000);
-    assert_eq!(info.get_bids()[0].quantity, 20);
-}
-
-#[test]
-fn modify_triggers_self_trade_prevention() {
-    let mut book = new_book();
-    let mut generator = make_generator();
-    let uid = uid_a();
-
-    let buy = make_order(OrderType::GoodTillCancel, Side::Buy, 49000, 10, uid);
-    book.add_order(&buy, &mut generator);
-
-    let modify = make_modify(buy.get_order_id(), 50000, Side::Buy, 10, uid);
-    let trades = book.modify_order(modify, &mut generator);
-    assert!(trades.is_some());
 }
 
 // ========== Duplicate Order Rejection ==========

@@ -83,10 +83,8 @@ impl TradeInfo {
 
 /// A single trade (fill) between two opposing orders.
 ///
-/// Created by the [`OrderBook`](crate::orderbook::OrderBook) during matching.
-/// Initially constructed with placeholder `trade_id = 0` and `timestamp = 0`;
-/// the [`CoreEngine`](crate::engine::CoreEngine) stamps real values via
-/// [`set_trade_id`](Trade::set_trade_id) and [`set_timestamp`](Trade::set_timestamp).
+/// Created by the [`OrderBook`](crate::orderbook::OrderBook) during matching
+/// with real snowflake `trade_id` and fill `timestamp`.
 ///
 /// # Fields
 ///
@@ -151,16 +149,6 @@ impl Trade {
     /// Returns a reference to the sell-side trade info.
     pub fn get_ask_trade_info(&self) -> &TradeInfo {
         &self.ask_trade
-    }
-
-    /// Overwrites the trade ID. Called by the engine to stamp the real snowflake ID.
-    pub fn set_trade_id(&mut self, id: TradeId) {
-        self.trade_id = id;
-    }
-
-    /// Overwrites the timestamp. Called by the engine to stamp the real fill time.
-    pub fn set_timestamp(&mut self, ts: u64) {
-        self.timestamp = ts;
     }
 }
 

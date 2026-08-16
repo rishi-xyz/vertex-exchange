@@ -3,7 +3,7 @@ mod helpers;
 use vertex_engine::engine::CoreEngine;
 use vertex_engine::engine::trade_def::{ExchangeEngine, UsersEngine};
 use vertex_engine::trading_pair::TradingPair;
-use vertex_engine::types::{Asset, OrderType, Side, UserId};
+use vertex_engine::types::{Asset, OrderError, OrderType, Side, UserId};
 
 use helpers::{make_modify, make_order, make_pair, make_user_id};
 
@@ -139,6 +139,79 @@ fn modify_order_nonexistent_pair_errs() {
     let modify = make_modify(42, 50000, Side::Buy, 10, make_user_id());
     let result = engine.modify_order(&eth_usdc(), modify);
     assert!(result.is_err());
+}
+
+#[test]
+fn modify_order_cancel_replace_preserves_order() {
+    let mut engine = new_engine();
+    engine.add_trading_pair(eth_usdc());
+    let uid = add_funded_user(&mut engine);
+
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
+    let id = order.get_order_id();
+    let _ = engine.add_order(&eth_usdc(), &order);
+
+    let modify = make_modify(id, 51000, Side::Buy, 20, uid);
+    let result = engine.modify_order(&eth_usdc(), modify);
+    assert!(matches!(result, Ok(Some(_))));
+
+    let info = engine.get_order_info(&eth_usdc()).unwrap();
+    assert_eq!(info.get_bids().len(), 1);
+    assert_eq!(info.get_bids()[0].price, 51000);
+    assert_eq!(info.get_bids()[0].quantity, 20);
+}
+
+#[test]
+fn modify_order_crossing_price_triggers_fill() {
+    let mut engine = new_engine();
+    engine.add_trading_pair(eth_usdc());
+    let maker_uid = add_funded_user(&mut engine);
+    let taker_uid = add_funded_user(&mut engine);
+
+    let sell = make_order(OrderType::GoodTillCancel, Side::Sell, 50000, 10, maker_uid);
+    let _ = engine.add_order(&eth_usdc(), &sell);
+
+    let buy = make_order(OrderType::GoodTillCancel, Side::Buy, 49000, 10, taker_uid);
+    let buy_id = buy.get_order_id();
+    let _ = engine.add_order(&eth_usdc(), &buy);
+    assert_eq!(engine.size(&eth_usdc()).unwrap(), 2);
+
+    let modify = make_modify(buy_id, 50000, Side::Buy, 10, taker_uid);
+    let result = engine.modify_order(&eth_usdc(), modify);
+    assert!(matches!(result, Ok(Some(trades)) if trades.len() == 1));
+    assert_eq!(engine.size(&eth_usdc()).unwrap(), 0);
+}
+
+#[test]
+fn modify_order_wrong_user_rejected() {
+    let mut engine = new_engine();
+    engine.add_trading_pair(eth_usdc());
+    let uid = add_funded_user(&mut engine);
+
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
+    let id = order.get_order_id();
+    let _ = engine.add_order(&eth_usdc(), &order);
+
+    let modify = make_modify(id, 51000, Side::Buy, 20, make_user_id());
+    let result = engine.modify_order(&eth_usdc(), modify);
+    assert!(matches!(result, Err(OrderError::InvalidOrder)));
+    assert_eq!(engine.size(&eth_usdc()).unwrap(), 1);
+}
+
+#[test]
+fn modify_order_insufficient_balance_rejected() {
+    let mut engine = new_engine();
+    engine.add_trading_pair(eth_usdc());
+    let uid = add_funded_user(&mut engine);
+
+    let order = make_order(OrderType::GoodTillCancel, Side::Buy, 50000, 10, uid);
+    let id = order.get_order_id();
+    let _ = engine.add_order(&eth_usdc(), &order);
+
+    let modify = make_modify(id, 1000000, Side::Buy, 1000, uid);
+    let result = engine.modify_order(&eth_usdc(), modify);
+    assert!(matches!(result, Err(OrderError::InsufficientBalance)));
+    assert_eq!(engine.size(&eth_usdc()).unwrap(), 1);
 }
 
 #[test]

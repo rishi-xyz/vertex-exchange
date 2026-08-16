@@ -5,10 +5,7 @@
 /// and creates a new one with a fresh snowflake ID.
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    order::Order,
-    types::{OrderId, OrderStatus, OrderType, Price, Quantity, Side, UserId},
-};
+use crate::types::{OrderId, OrderStatus, Price, Quantity, Side, UserId};
 
 /// A request to modify (cancel-replace) an existing order.
 ///
@@ -111,25 +108,5 @@ impl OrderModify {
     /// Returns the user who owns this order.
     pub fn get_user_id(&self) -> UserId {
         self.user_id
-    }
-
-    /// Converts this modification request into a new [`Order`] pointer.
-    ///
-    /// Used internally by [`OrderBook::modify_orders`](crate::orderbook::OrderBook::modify_orders)
-    /// to construct the replacement order after cancelling the original.
-    ///
-    /// # Arguments
-    ///
-    /// * `order_type` — The order type from the original order (carried forward)
-    pub fn to_order_pointer(&self, order_type: OrderType) -> Order {
-        Order::new(
-            self.order_id,
-            order_type,
-            self.side,
-            self.status,
-            self.price,
-            self.quantity,
-            self.user_id,
-        )
     }
 }

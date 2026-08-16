@@ -1,7 +1,7 @@
 mod helpers;
 
 use vertex_engine::order_modify::OrderModify;
-use vertex_engine::types::{OrderStatus, OrderType, Side};
+use vertex_engine::types::{OrderStatus, Side};
 
 use helpers::{make_modify, make_user_id};
 
@@ -15,19 +15,6 @@ fn new_stores_all_fields() {
     assert_eq!(modify.get_quantity(), 20);
     assert_eq!(modify.get_status(), OrderStatus::Empty);
     assert_eq!(modify.get_user_id(), uid);
-}
-
-#[test]
-fn to_order_pointer_creates_correct_order() {
-    let uid = make_user_id();
-    let modify = make_modify(42, 55000, Side::Sell, 20, uid);
-    let order = modify.to_order_pointer(OrderType::FillAndKill);
-    assert_eq!(order.get_order_id(), 42);
-    assert_eq!(order.get_type(), OrderType::FillAndKill);
-    assert_eq!(order.get_side(), Side::Sell);
-    assert_eq!(order.get_price(), 55000);
-    assert_eq!(order.get_initial_quantity(), 20);
-    assert_eq!(order.get_user_id(), uid);
 }
 
 #[test]

@@ -27,7 +27,6 @@
 //! in a `tokio::sync::RwLock` at the gRPC boundary.
 
 use crate::level_info::{LevelInfo, OrderBookLevelInfo};
-use crate::order_modify::OrderModify;
 use crate::snowflake_id::SnowFlakeGenerator;
 use crate::trade::{Trade, TradeInfo};
 use crate::types::OrderType;
@@ -584,37 +583,6 @@ impl OrderBook {
         };
         level.push_back(*order);
         Some(self.match_order(order_side, generator))
-    }
-
-    /// Modifies an existing order by cancel-replace.
-    ///
-    /// Cancels the old order and creates a new one with the parameters from
-    /// `order_modify`. The new order then goes through the full matching flow.
-    pub fn modify_order(
-        &mut self,
-        order_modify: OrderModify,
-        generator: &mut SnowFlakeGenerator,
-    ) -> Option<Trades> {
-        let order_id = order_modify.get_order_id();
-        // if order doesn't exits return
-        if !self.orders_map.contains_key(&order_id) {
-            return None;
-        }
-        let order_type = {
-            let existing = self.orders_map.get(&order_id).unwrap();
-            existing.get_type()
-        };
-        let new_order = Order::new(
-            order_id,
-            order_type,
-            order_modify.get_side(),
-            order_modify.get_status(),
-            order_modify.get_price(),
-            order_modify.get_quantity(),
-            order_modify.get_user_id(),
-        );
-        let _ = self.cancel_order(&order_id);
-        self.add_order(&new_order, generator)
     }
 
     /// Returns the total number of resting orders in the book.
