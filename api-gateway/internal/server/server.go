@@ -20,6 +20,7 @@ import (
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/ws"
 )
 
 type Server struct {
@@ -27,6 +28,7 @@ type Server struct {
 	engine *grpcclient.Client
 	store  *db.Store
 	auth   *auth.Manager
+	hub    *ws.Hub
 }
 
 func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store) *Server {
@@ -35,6 +37,7 @@ func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store) *Server
 		engine: engine,
 		store:  store,
 		auth:   auth.NewManager(cfg.JWTSecret, cfg.JWTTTL),
+		hub:    ws.NewHub(),
 	}
 }
 
@@ -60,6 +63,7 @@ func (s *Server) Router() http.Handler {
 	})
 	r.With(s.authenticate).Get("/balances", s.handleBalances)
 	r.Get("/orderbook/{pair}", s.handleGetOrderBook)
+	r.Get("/ws", s.authenticateWS(s.handleWS))
 	return r
 }
 

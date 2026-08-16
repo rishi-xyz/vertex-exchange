@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,6 +138,7 @@ func (s *Server) handleSubmitOrder(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "persist order", err)
 		return
 	}
+	go s.broadcastDepth(context.Background(), pairName(pair))
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"order": map[string]any{
