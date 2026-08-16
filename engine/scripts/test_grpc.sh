@@ -27,13 +27,19 @@ call() {
 # ─── Step 1-2: Create users ───────────────────────────────────
 echo ">> Adding users..."
 
-ALICE_ID=$($GRPCURL -d '{}' $HOST vertex_engine.EngineServices/AddUser | jq -r '.userId')
+ALICE_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 echo "--- Step 1: vertex_engine.EngineServices/AddUser ---"
+ALICE_RESP=$($GRPCURL -d "{\"userId\":\"$ALICE_ID\"}" $HOST vertex_engine.EngineServices/AddUser)
+echo "Request: {\"userId\":\"$ALICE_ID\"}"
+echo "Response: $ALICE_RESP"
 echo "Alice ID: $ALICE_ID"
 echo ""
 
-BOB_ID=$($GRPCURL -d '{}' $HOST vertex_engine.EngineServices/AddUser | jq -r '.userId')
+BOB_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 echo "--- Step 2: vertex_engine.EngineServices/AddUser ---"
+BOB_RESP=$($GRPCURL -d "{\"userId\":\"$BOB_ID\"}" $HOST vertex_engine.EngineServices/AddUser)
+echo "Request: {\"userId\":\"$BOB_ID\"}"
+echo "Response: $BOB_RESP"
 echo "Bob ID: $BOB_ID"
 echo ""
 
@@ -52,11 +58,11 @@ call 7 vertex_engine.EngineServices/AddTradingPair \
     '{"pair":{"base":"SOL","quote":"USDC"}}'
 
 # ─── Step 8: Get order book (empty) ────────────────────────────
-call 8 vertex_engine.UserSerivces/GetOrderBook \
+call 8 vertex_engine.UserServices/GetOrderBook \
     '{"pair":{"base":"SOL","quote":"USDC"}}'
 
 # ─── Step 9: Alice places a buy order ──────────────────────────
-echo "--- Step 9: vertex_engine.UserSerivces/SubmitOrder (Alice buys 50 SOL @ 25 USDC) ---"
+echo "--- Step 9: vertex_engine.UserServices/SubmitOrder (Alice buys 50 SOL @ 25 USDC) ---"
 ALICE_ORDER=$($GRPCURL -d "{
   \"pair\":{\"base\":\"SOL\",\"quote\":\"USDC\"},
   \"orderType\":\"GoodTillCancel\",
@@ -64,18 +70,18 @@ ALICE_ORDER=$($GRPCURL -d "{
   \"price\":25,
   \"quantity\":50,
   \"userId\":\"$ALICE_ID\"
-}" $HOST vertex_engine.UserSerivces/SubmitOrder)
+}" $HOST vertex_engine.UserServices/SubmitOrder)
 echo "Response: $ALICE_ORDER"
 ALICE_ORDER_ID=$(echo "$ALICE_ORDER" | jq -r '.orderId')
 echo "Alice order ID: $ALICE_ORDER_ID"
 echo ""
 
 # ─── Step 10: Get order book (should have bid) ─────────────────
-call 10 vertex_engine.UserSerivces/GetOrderBook \
+call 10 vertex_engine.UserServices/GetOrderBook \
     '{"pair":{"base":"SOL","quote":"USDC"}}'
 
 # ─── Step 11: Bob places a matching sell order ─────────────────
-echo "--- Step 11: vertex_engine.UserSerivces/SubmitOrder (Bob sells 30 SOL @ 25 USDC) ---"
+echo "--- Step 11: vertex_engine.UserServices/SubmitOrder (Bob sells 30 SOL @ 25 USDC) ---"
 BOB_ORDER=$($GRPCURL -d "{
   \"pair\":{\"base\":\"SOL\",\"quote\":\"USDC\"},
   \"orderType\":\"GoodTillCancel\",
@@ -83,18 +89,18 @@ BOB_ORDER=$($GRPCURL -d "{
   \"price\":25,
   \"quantity\":30,
   \"userId\":\"$BOB_ID\"
-}" $HOST vertex_engine.UserSerivces/SubmitOrder)
+}" $HOST vertex_engine.UserServices/SubmitOrder)
 echo "Response: $BOB_ORDER"
 BOB_ORDER_ID=$(echo "$BOB_ORDER" | jq -r '.orderId')
 echo "Bob order ID: $BOB_ORDER_ID"
 echo ""
 
 # ─── Step 12: Get order book (should show trades, remaining) ───
-call 12 vertex_engine.UserSerivces/GetOrderBook \
+call 12 vertex_engine.UserServices/GetOrderBook \
     '{"pair":{"base":"SOL","quote":"USDC"}}'
 
 # ─── Step 13: Modify Alice's order ─────────────────────────────
-call 13 vertex_engine.UserSerivces/ModifyOrder \
+call 13 vertex_engine.UserServices/ModifyOrder \
     "{
       \"pair\":{\"base\":\"SOL\",\"quote\":\"USDC\"},
       \"orderId\":$ALICE_ORDER_ID,
@@ -105,7 +111,7 @@ call 13 vertex_engine.UserSerivces/ModifyOrder \
     }"
 
 # ─── Step 14: Cancel Bob's remaining order ─────────────────────
-call 14 vertex_engine.UserSerivces/CancelOrder \
+call 14 vertex_engine.UserServices/CancelOrder \
     "{
       \"pair\":{\"base\":\"SOL\",\"quote\":\"USDC\"},
       \"orderId\":$BOB_ORDER_ID
@@ -119,17 +125,17 @@ call 15 vertex_engine.EngineServices/WithdrawBalance \
 call 16 vertex_engine.EngineServices/RemoveUser \
     "{\"userId\":\"$BOB_ID\"}"
 
-# ─── Step 17: Overflow test (should NOT crash the engine) ──────
-echo "--- Step 17: Overflow test (massive deposit x2) ---"
+# ─── Step 17: Large deposit (balances are u64, no overflow) ───
+echo "--- Step 17: Large deposit sanity check ---"
 call 17 vertex_engine.EngineServices/DepositBalance \
     "{\"userId\":\"$ALICE_ID\",\"asset\":\"SOL\",\"quantity\":3270311877}"
 call 17b vertex_engine.EngineServices/DepositBalance \
     "{\"userId\":\"$ALICE_ID\",\"asset\":\"SOL\",\"quantity\":2724320592}"
-echo "(This second deposit should overflow u32; the engine should log an error and keep running)"
+echo "(Large deposits should succeed with u64 balances; the engine stays alive)"
 echo ""
 
 # ─── Step 18: Verify engine is still alive ─────────────────────
-call 18 vertex_engine.UserSerivces/GetOrderBook \
+call 18 vertex_engine.UserServices/GetOrderBook \
     '{"pair":{"base":"SOL","quote":"USDC"}}'
 
 echo "=============================================="
