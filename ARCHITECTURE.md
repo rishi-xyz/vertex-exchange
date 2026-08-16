@@ -4,6 +4,8 @@
 
 ---
 
+![Architecture Image](assets/vertex.png)
+
 ## 1. High-Level Flow
 
 ```
