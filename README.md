@@ -4,13 +4,7 @@ Centralized crypto exchange matching engine and trading infrastructure.
 
 ## Architecture
 
-```
-Clients → Go API Layer → gRPC → Rust Matching Engine
-               ↓                        ↓
-       Redis Streams ← ← ← ← Redis Pub/Sub (fills)
-               ↓
-        DB Filler / Notification Fan-out → Storage
-```
+![Architecture Image](assets/vertex.png)
 
 ## Stack
 
