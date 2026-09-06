@@ -48,3 +48,12 @@ func parsePair(s string) (*engine.TradingPair, error) {
 func pairName(p *engine.TradingPair) string {
 	return assetName(p.Base) + "-" + assetName(p.Quote)
 }
+
+// splitPair splits a normalized "BASE-QUOTE" string into its two asset names.
+func splitPair(s string) (base, quote string, ok bool) {
+	parts := strings.Split(s, "-")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}

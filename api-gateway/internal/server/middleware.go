@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/ratelimit"
 )
 
 type ctxKey int
@@ -49,4 +50,22 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 func userFromContext(ctx context.Context) *db.User {
 	user, _ := ctx.Value(userKey).(*db.User)
 	return user
+}
+
+// rateLimit throttles callers per authenticated user when available,
+// falling back to source IP for unauthenticated routes.
+func (s *Server) rateLimit(l *ratelimit.Limiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := "ip:" + r.RemoteAddr
+			if user := userFromContext(r.Context()); user != nil {
+				key = "user:" + user.ID.String()
+			}
+			if !l.Allow(key) {
+				writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

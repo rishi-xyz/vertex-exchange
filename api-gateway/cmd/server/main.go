@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/balancecache"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/fills"
@@ -38,7 +40,14 @@ func main() {
 	log.Printf("connected to engine at %s", cfg.EngineGRPCAddr)
 
 	store := db.NewStore(pool)
-	srv := server.New(cfg, engine, store)
+
+	balCache, err := balancecache.New(cfg.RedisURL, 2*time.Second)
+	if err != nil {
+		log.Fatalf("balance cache: %v", err)
+	}
+	defer balCache.Close()
+
+	srv := server.New(cfg, engine, store, balCache)
 
 	consumer, err := fills.New(cfg.RedisURL, store, srv.OnFill)
 	if err != nil {

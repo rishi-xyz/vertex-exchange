@@ -104,3 +104,47 @@ func (s *Store) GetOrderByID(ctx context.Context, id uuid.UUID) (*Order, error) 
 	}
 	return &o, nil
 }
+
+// ListOrders returns a user's orders, most recent first, optionally filtered
+// by pair and/or status. Empty filters match everything.
+func (s *Store) ListOrders(ctx context.Context, userID uuid.UUID, pair, status string, limit, offset int) ([]*Order, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, pair, side, order_type, price, quantity, remaining, status, engine_order_id, created_at
+		 FROM orders
+		 WHERE user_id = $1 AND ($2 = '' OR pair = $2) AND ($3 = '' OR status = $3)
+		 ORDER BY created_at DESC
+		 LIMIT $4 OFFSET $5`,
+		userID, pair, status, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []*Order
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Pair, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Remaining, &o.Status, &o.EngineOrderID, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		orders = append(orders, &o)
+	}
+	return orders, rows.Err()
+}
+
+// CancelOrder marks an order Cancelled. It is a no-op if the order is already
+// in a terminal state (Filled/Cancelled).
+func (s *Store) CancelOrder(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE orders SET status = 'Cancelled' WHERE id = $1 AND status NOT IN ('Filled', 'Cancelled')`, id)
+	return err
+}
+
+// ModifyOrder overwrites an order's price/quantity after a successful
+// engine cancel-replace, resetting it to a fresh resting order.
+func (s *Store) ModifyOrder(ctx context.Context, id uuid.UUID, price int32, quantity uint32) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE orders SET price = $2, quantity = $3, remaining = $3, status = 'Empty' WHERE id = $1`,
+		id, price, quantity)
+	return err
+}

@@ -13,17 +13,17 @@ const (
 	maxMsgSize = 4096
 )
 
-// Client is a single websocket connection subscribed to one pair.
+// Client is a single websocket connection subscribed to one or more topics.
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
-	pair string
+	hub    *Hub
+	conn   *websocket.Conn
+	send   chan []byte
+	topics []string
 }
 
-// Serve registers the connection and runs its read and write loops until the
-// peer disconnects.
-func (h *Hub) Serve(conn *websocket.Conn, pair string) {
+// Serve registers the connection under topics and runs its read and write
+// loops until the peer disconnects.
+func (h *Hub) Serve(conn *websocket.Conn, topics []string) {
 	conn.SetReadLimit(maxMsgSize)
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
@@ -32,13 +32,15 @@ func (h *Hub) Serve(conn *websocket.Conn, pair string) {
 	})
 
 	c := &Client{
-		hub:  h,
-		conn: conn,
-		send: make(chan []byte, 32),
-		pair: pair,
+		hub:    h,
+		conn:   conn,
+		send:   make(chan []byte, 32),
+		topics: topics,
 	}
-	if pair != "" {
-		h.Subscribe(pair, c)
+	for _, topic := range topics {
+		if topic != "" {
+			h.Subscribe(topic, c)
+		}
 	}
 
 	writeDone := make(chan struct{})

@@ -18,9 +18,11 @@ import (
 
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/gen/engine"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/auth"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/balancecache"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/ratelimit"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/ws"
 )
 
@@ -30,15 +32,29 @@ type Server struct {
 	store  *db.Store
 	auth   *auth.Manager
 	hub    *ws.Hub
+
+	// balCache is optional: a nil cache simply disables the balance
+	// pre-check fast-path and every check falls through to the engine.
+	balCache *balancecache.Cache
+
+	orderLimiter *ratelimit.Limiter
+	authLimiter  *ratelimit.Limiter
 }
 
-func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store) *Server {
+// New builds a Server. balCache may be nil to run without the balance
+// pre-check fast-path (e.g. Redis unavailable at boot).
+func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store, balCache *balancecache.Cache) *Server {
 	return &Server{
-		cfg:    cfg,
-		engine: engine,
-		store:  store,
-		auth:   auth.NewManager(cfg.JWTSecret, cfg.JWTTTL),
-		hub:    ws.NewHub(),
+		cfg:      cfg,
+		engine:   engine,
+		store:    store,
+		auth:     auth.NewManager(cfg.JWTSecret, cfg.JWTTTL),
+		hub:      ws.NewHub(),
+		balCache: balCache,
+		// 5 requests/sec, burst 10, per authenticated user.
+		orderLimiter: ratelimit.New(5, 10),
+		// 1 request/5s, burst 5, per source IP.
+		authLimiter: ratelimit.New(0.2, 5),
 	}
 }
 
@@ -50,20 +66,28 @@ func (s *Server) Router() http.Handler {
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Route("/auth", func(r chi.Router) {
+		r.Use(s.rateLimit(s.authLimiter))
 		r.Post("/register", s.handleRegister)
 		r.Post("/login", s.handleLogin)
 		r.With(s.authenticate).Get("/me", s.handleMe)
 	})
 	r.Route("/users", func(r chi.Router) {
+		r.Use(s.authenticate)
 		r.Post("/{id}/deposit", s.handleDeposit)
 	})
 	r.Route("/orders", func(r chi.Router) {
 		r.Use(s.authenticate)
+		r.Use(s.rateLimit(s.orderLimiter))
 		r.Post("/", s.handleSubmitOrder)
+		r.Get("/", s.handleListOrders)
 		r.Get("/{id}", s.handleGetOrder)
+		r.Post("/{id}/cancel", s.handleCancelOrder)
+		r.Patch("/{id}", s.handleModifyOrder)
 	})
 	r.With(s.authenticate).Get("/balances", s.handleBalances)
+	r.With(s.authenticate).Get("/trades", s.handleListTrades)
 	r.Get("/orderbook/{pair}", s.handleGetOrderBook)
+	r.Get("/ticker/{pair}", s.handleTicker)
 	r.Get("/ws", s.authenticateWS(s.handleWS))
 	return r
 }
@@ -230,6 +254,8 @@ func grpcToHTTP(err error) (int, string) {
 		return http.StatusConflict, "already_exists"
 	case codes.Unauthenticated:
 		return http.StatusUnauthorized, "unauthenticated"
+	case codes.Unavailable, codes.DeadlineExceeded:
+		return http.StatusServiceUnavailable, "engine_unavailable"
 	default:
 		return http.StatusInternalServerError, "internal_error"
 	}

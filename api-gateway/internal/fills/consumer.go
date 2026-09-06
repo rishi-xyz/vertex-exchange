@@ -17,8 +17,9 @@ const (
 	Group  = "gateway-group"
 )
 
-// FillHandler is invoked for every newly persisted fill.
-type FillHandler func(db.Fill)
+// FillHandler is invoked for every newly persisted fill with the resulting
+// state of the two orders it matched.
+type FillHandler func(db.Fill, []db.FillOrderUpdate)
 
 type Consumer struct {
 	rdb    *redis.Client
@@ -77,10 +78,11 @@ func (c *Consumer) Run(ctx context.Context) {
 					if err := c.store.AddTrade(context.Background(), fill); err != nil {
 						log.Printf("fills: add trade: %v", err)
 					}
-					if err := c.store.ApplyFillToOrders(context.Background(), fill); err != nil {
+					updates, err := c.store.ApplyFillToOrders(context.Background(), fill)
+					if err != nil {
 						log.Printf("fills: apply fill: %v", err)
 					}
-					c.onFill(fill)
+					c.onFill(fill, updates)
 				}
 				c.rdb.XAck(context.Background(), Stream, Group, msg.ID)
 			}

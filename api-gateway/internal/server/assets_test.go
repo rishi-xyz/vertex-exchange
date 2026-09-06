@@ -65,6 +65,31 @@ func TestParseSideAndType(t *testing.T) {
 	}
 }
 
+func TestSplitPair(t *testing.T) {
+	base, quote, ok := splitPair("ETH-USDC")
+	if !ok || base != "ETH" || quote != "USDC" {
+		t.Errorf("splitPair(ETH-USDC) = %q, %q, %v", base, quote, ok)
+	}
+	if _, _, ok := splitPair("ETH"); ok {
+		t.Error("splitPair(ETH) should fail")
+	}
+	if _, _, ok := splitPair("ETH-USDC-BTC"); ok {
+		t.Error("splitPair(ETH-USDC-BTC) should fail")
+	}
+}
+
+func TestSideFromStored(t *testing.T) {
+	if s, ok := sideFromStored("Buy"); !ok || s != engine.Side_Buy {
+		t.Errorf("sideFromStored(Buy) = %v, %v", s, ok)
+	}
+	if s, ok := sideFromStored("Sell"); !ok || s != engine.Side_Sell {
+		t.Errorf("sideFromStored(Sell) = %v, %v", s, ok)
+	}
+	if _, ok := sideFromStored("buy"); ok {
+		t.Error("sideFromStored(buy) should fail: only exact stored casing is valid")
+	}
+}
+
 func TestValidEmail(t *testing.T) {
 	valid := []string{"a@b.co", "user@example.com", "x.y+tag@sub.example.org"}
 	for _, e := range valid {

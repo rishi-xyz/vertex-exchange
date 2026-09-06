@@ -86,8 +86,40 @@ SELLER_TOKEN=$(curl -s -m 5 -X POST "$BASE_URL/auth/login" -d "{\"email\":\"$SEL
 [ -n "$BUYER_TOKEN" ] && [ -n "$SELLER_TOKEN" ] || fail "login"
 
 log "funding accounts"
-curl -s -m 5 -X POST "$BASE_URL/users/$BUYER_ID/deposit" -d '{"asset":"USDC","quantity":10000}' >/dev/null || fail "fund buyer"
-curl -s -m 5 -X POST "$BASE_URL/users/$SELLER_ID/deposit" -d '{"asset":"ETH","quantity":10}' >/dev/null || fail "fund seller"
+curl -s -m 5 -X POST -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/users/$BUYER_ID/deposit" -d '{"asset":"USDC","quantity":10000}' >/dev/null || fail "fund buyer"
+curl -s -m 5 -X POST -H "Authorization: Bearer $SELLER_TOKEN" "$BASE_URL/users/$SELLER_ID/deposit" -d '{"asset":"ETH","quantity":10}' >/dev/null || fail "fund seller"
+
+log "asserting deposit is IDOR-safe (seller cannot deposit into buyer's account)"
+CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $SELLER_TOKEN" "$BASE_URL/users/$BUYER_ID/deposit" -d '{"asset":"USDC","quantity":1}')
+[ "$CODE" = "404" ] || fail "cross-account deposit expected 404, got $CODE"
+
+log "asserting balances report available/locked/total"
+BUYER_BAL=$(curl -s -m 5 -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/balances")
+[ "$(echo "$BUYER_BAL" | json "['balances']['USDC']['available']")" = "10000" ] || fail "buyer USDC available wrong: $BUYER_BAL"
+[ "$(echo "$BUYER_BAL" | json "['balances']['USDC']['locked']")" = "0" ] || fail "buyer USDC locked wrong: $BUYER_BAL"
+
+log "placing a non-crossing bid to test cancel"
+CANCEL_BID=$(curl -s -m 5 -X POST -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/orders" \
+  -d '{"pair":"ETH-USDC","side":"buy","type":"gtc","price":100,"quantity":1}')
+CANCEL_BID_ID=$(echo "$CANCEL_BID" | json "['order']['id']")
+[ -n "$CANCEL_BID_ID" ] || fail "place cancel-test bid: $CANCEL_BID"
+curl -s -m 5 -X POST -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/orders/$CANCEL_BID_ID/cancel" | json "['cancelled']" | grep -q True \
+  || fail "cancel order did not report cancelled=true"
+CANCEL_STATUS=$(curl -s -m 5 -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/orders/$CANCEL_BID_ID" | json "['order']['status']")
+[ "$CANCEL_STATUS" = "Cancelled" ] || fail "cancelled order status = $CANCEL_STATUS, want Cancelled"
+log "asserting a cancelled order cannot be cancelled again"
+CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/orders/$CANCEL_BID_ID/cancel")
+[ "$CODE" = "409" ] || fail "re-cancel expected 409, got $CODE"
+
+log "placing a non-crossing ask to test modify"
+MODIFY_ASK=$(curl -s -m 5 -X POST -H "Authorization: Bearer $SELLER_TOKEN" "$BASE_URL/orders" \
+  -d '{"pair":"ETH-USDC","side":"sell","type":"gtc","price":9000,"quantity":2}')
+MODIFY_ASK_ID=$(echo "$MODIFY_ASK" | json "['order']['id']")
+[ -n "$MODIFY_ASK_ID" ] || fail "place modify-test ask: $MODIFY_ASK"
+MODIFIED=$(curl -s -m 5 -X PATCH -H "Authorization: Bearer $SELLER_TOKEN" "$BASE_URL/orders/$MODIFY_ASK_ID" -d '{"price":9500,"quantity":3}')
+[ "$(echo "$MODIFIED" | json "['order']['price']")" = "9500" ] || fail "modify did not update price: $MODIFIED"
+[ "$(echo "$MODIFIED" | json "['order']['quantity']")" = "3" ] || fail "modify did not update quantity: $MODIFIED"
+curl -s -m 5 -X POST -H "Authorization: Bearer $SELLER_TOKEN" "$BASE_URL/orders/$MODIFY_ASK_ID/cancel" >/dev/null || fail "cancel modify-test ask"
 
 log "connecting buyer websocket"
 curl -s -m 20 -N --http1.1 -H "Authorization: Bearer $BUYER_TOKEN" \
@@ -128,6 +160,19 @@ log "asserting book cleared after fill"
 BOOK=$(curl -s -m 5 "$BASE_URL/orderbook/ETH-USDC")
 [ "$(echo "$BOOK" | json "['bids']")" = "[]" ] || fail "bids not cleared: $BOOK"
 [ "$(echo "$BOOK" | json "['asks']")" = "[]" ] || fail "asks not cleared: $BOOK"
+
+log "asserting order history lists the filled bid"
+ORDERS=$(curl -s -m 5 -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/orders?pair=ETH-USDC&status=Filled")
+echo "$ORDERS" | grep -q "\"$BID_ID\"" || fail "order history missing filled bid: $ORDERS"
+
+log "asserting trade history lists the trade"
+TRADES=$(curl -s -m 5 -H "Authorization: Bearer $BUYER_TOKEN" "$BASE_URL/trades?pair=ETH-USDC")
+echo "$TRADES" | grep -q '"side":"buy"' || fail "trade history missing buyer's trade: $TRADES"
+
+log "asserting ticker reflects the last trade"
+TICKER=$(curl -s -m 5 "$BASE_URL/ticker/ETH-USDC")
+[ "$(echo "$TICKER" | json "['last_price']")" = "3000" ] || fail "ticker last_price wrong: $TICKER"
+[ "$(echo "$TICKER" | json "['trade_count_24h']")" -ge 1 ] || fail "ticker trade_count_24h wrong: $TICKER"
 
 log "PASS: end-to-end vertical slice green"
 log "  trade_id: $(grep -o '"trade_id":[0-9]*' "$WS_LOG" | head -1)"

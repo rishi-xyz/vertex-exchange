@@ -56,15 +56,23 @@ func (s *Server) authenticateWS(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// handleWS accepts an authenticated connection and always subscribes it to
+// the caller's personal order channel ("user:<id>"); a pair query parameter
+// (optional) additionally subscribes it to that pair's depth/trade/ticker
+// events and sends an initial depth snapshot.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	pairStr := strings.ToUpper(r.URL.Query().Get("pair"))
-	if pairStr == "" {
-		writeError(w, http.StatusBadRequest, "invalid_pair", "pair query parameter is required")
+	user := userFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
 		return
 	}
-	if _, err := parsePair(pairStr); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_pair", err.Error())
-		return
+
+	pairStr := strings.ToUpper(r.URL.Query().Get("pair"))
+	if pairStr != "" {
+		if _, err := parsePair(pairStr); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_pair", err.Error())
+			return
+		}
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -72,15 +80,25 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send a depth snapshot so clients can render the book immediately.
-	if msg, ok := s.depthMessage(r.Context(), pairStr); ok {
-		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			conn.Close()
-			return
+	if pairStr != "" {
+		// Send a depth snapshot so clients can render the book immediately.
+		if msg, ok := s.depthMessage(r.Context(), pairStr); ok {
+			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				conn.Close()
+				return
+			}
 		}
 	}
 
-	s.hub.Serve(conn, pairStr)
+	topics := []string{userTopic(user.ID)}
+	if pairStr != "" {
+		topics = append(topics, pairStr)
+	}
+	s.hub.Serve(conn, topics)
+}
+
+func userTopic(id uuid.UUID) string {
+	return "user:" + id.String()
 }
 
 // broadcastDepth re-fetches the orderbook for pair and pushes it to subscribers.
@@ -128,8 +146,44 @@ func (s *Server) broadcastTrade(pairStr string, trade map[string]any) {
 	s.hub.Broadcast(pairStr, msg)
 }
 
-// OnFill persists-then-pushes a fill to the websocket subscribers of its pair.
-func (s *Server) OnFill(f db.Fill) {
+// broadcastTicker pushes a last-price update to subscribers of the pair.
+func (s *Server) broadcastTicker(pairStr string, price, quantity, timestampMs int64) {
+	msg, err := json.Marshal(map[string]any{
+		"type":      "ticker",
+		"pair":      pairStr,
+		"price":     price,
+		"quantity":  quantity,
+		"timestamp": timestampMs,
+	})
+	if err != nil {
+		return
+	}
+	s.hub.Broadcast(pairStr, msg)
+}
+
+// broadcastOrderUpdate pushes an order status change to its owner's personal
+// channel.
+func (s *Server) broadcastOrderUpdate(u db.FillOrderUpdate) {
+	msg, err := json.Marshal(map[string]any{
+		"type": "order",
+		"order": map[string]any{
+			"id":        u.OrderID.String(),
+			"pair":      u.Pair,
+			"status":    u.Status,
+			"remaining": u.Remaining,
+		},
+	})
+	if err != nil {
+		return
+	}
+	s.hub.Broadcast(userTopic(u.UserID), msg)
+}
+
+// OnFill persists-then-pushes a fill to websocket subscribers: trade + ticker
+// events on the pair channel, and an order status update to each side's
+// personal channel. It also invalidates the balance pre-check cache for both
+// parties, since a fill moves funds on both sides of the pair.
+func (s *Server) OnFill(f db.Fill, updates []db.FillOrderUpdate) {
 	s.broadcastTrade(f.Pair, map[string]any{
 		"trade_id":  f.TradeID,
 		"timestamp": f.Timestamp / 1_000_000,
@@ -148,5 +202,18 @@ func (s *Server) OnFill(f db.Fill) {
 			"quantity": f.AskQuantity,
 		},
 	})
+	s.broadcastTicker(f.Pair, f.BidPrice, f.BidQuantity, f.Timestamp/1_000_000)
+	for _, u := range updates {
+		s.broadcastOrderUpdate(u)
+	}
+	if s.balCache != nil {
+		if base, quote, ok := splitPair(f.Pair); ok {
+			ctx := context.Background()
+			s.balCache.Invalidate(ctx, f.BidUserID, base)
+			s.balCache.Invalidate(ctx, f.BidUserID, quote)
+			s.balCache.Invalidate(ctx, f.AskUserID, base)
+			s.balCache.Invalidate(ctx, f.AskUserID, quote)
+		}
+	}
 	s.broadcastDepth(context.Background(), f.Pair)
 }
