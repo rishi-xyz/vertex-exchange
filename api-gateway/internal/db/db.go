@@ -16,9 +16,18 @@ import (
 //go:embed migrations
 var migrationsFS embed.FS
 
-// Open connects to Postgres and applies pending migrations.
-func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, url)
+// Open connects to Postgres and applies pending migrations. maxConns caps
+// the pool size (0 leaves pgxpool's own default, which is far too small —
+// 4 — for any real concurrency).
+func Open(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, error) {
+	poolCfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres url: %w", err)
+	}
+	if maxConns > 0 {
+		poolCfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -19,6 +20,59 @@ import (
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/gen/engine"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
 )
+
+// errorTracker buckets non-success order placements by cause, so a spike in
+// "errored" is diagnosable instead of an opaque count. Shared across all
+// workers for one run.
+type errorTracker struct {
+	mu     sync.Mutex
+	counts map[string]int64
+}
+
+func newErrorTracker() *errorTracker { return &errorTracker{counts: make(map[string]int64)} }
+
+const maxErrorBuckets = 20
+
+func (t *errorTracker) record(status int, err error) {
+	key := errorKey(status, err)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, exists := t.counts[key]; !exists && len(t.counts) >= maxErrorBuckets {
+		key = "other (bucket limit reached)"
+	}
+	t.counts[key]++
+}
+
+func (t *errorTracker) snapshot() map[string]int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]int64, len(t.counts))
+	for k, v := range t.counts {
+		out[k] = v
+	}
+	return out
+}
+
+func errorKey(status int, err error) string {
+	if err == nil {
+		return fmt.Sprintf("http %d", status)
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "Client.Timeout") || strings.Contains(msg, "context deadline exceeded"):
+		return "client timeout"
+	case strings.Contains(msg, "connection refused"):
+		return "connection refused"
+	case strings.Contains(msg, "connection reset"):
+		return "connection reset"
+	case strings.Contains(msg, "too many open files"):
+		return "too many open files (fd exhaustion)"
+	case strings.Contains(msg, "EOF"):
+		return "EOF (connection closed mid-request)"
+	default:
+		return "other transport error: " + msg
+	}
+}
 
 var httpClient = &http.Client{
 	Timeout: 10 * time.Second,
@@ -189,6 +243,7 @@ func (w *worker) placeLoop(ctx context.Context, rc runConfig) {
 			}
 		case err != nil || status != http.StatusCreated:
 			w.errored++
+			rc.errTracker.record(status, err)
 		default:
 			w.ok++
 			w.placementLatencies = append(w.placementLatencies, time.Since(t0))
@@ -225,6 +280,20 @@ func (w *worker) cleanup(ctx context.Context, engineClient *grpcclient.Client, p
 	return len(ids)
 }
 
+// drainAndClose fully reads and closes resp.Body. Go's transport can only
+// return a connection to the keep-alive pool if the body was read to EOF
+// before Close; closing early (as this tool originally did on every
+// non-201/non-200 response) forces a brand new TCP connection — and thus a
+// new local ephemeral port — for every single throttled/error response.
+// Under sustained load with tens of thousands of 429s, that reliably
+// exhausts the local ephemeral port range within its ~60s TIME_WAIT window,
+// surfacing as "dial tcp ...: cannot assign requested address" — a
+// benchmark-client artifact, not a server-side failure.
+func drainAndClose(resp *http.Response) {
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
 // checkAuth performs a side-effect-free authenticated GET, returning the
 // HTTP status so callers can distinguish a valid token (200) from an
 // invalid one (401) without placing any state-changing request.
@@ -238,7 +307,7 @@ func checkAuth(ctx context.Context, baseURL, token string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer drainAndClose(resp)
 	return resp.StatusCode, nil
 }
 
@@ -260,7 +329,7 @@ func submitOrder(ctx context.Context, baseURL, token, pairStr, side string, pric
 	if err != nil {
 		return "", "", 0, err
 	}
-	defer resp.Body.Close()
+	defer drainAndClose(resp)
 
 	if resp.StatusCode != http.StatusCreated {
 		return "", "", resp.StatusCode, nil

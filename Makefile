@@ -1,9 +1,11 @@
-.PHONY: up down build logs test lint e2e seed bench
+.PHONY: up down build logs test lint e2e seed bench pressure
 
 JWT_SECRET     ?= dev-secret-change-me
 BENCH_USERS    ?= 50
 BENCH_DURATION ?= 30s
 BENCH_PAIR     ?= ETH-USDC
+USER_STEPS     ?= 10 25 50 100 200 400
+STEP_DURATION  ?= 20s
 
 ## Bring up the full stack (postgres, redis, engine, gateway) in containers.
 up:
@@ -51,3 +53,12 @@ bench:
 		-users $(BENCH_USERS) \
 		-duration $(BENCH_DURATION) \
 		-pair $(BENCH_PAIR)
+
+## Capacity ramp test: runs `bench` at increasing user counts (USER_STEPS)
+## and prints a table of throughput/latency/fill-rate per step, so you can
+## see concretely where capacity bends rather than picking one user count
+## and guessing. JWT_SECRET MUST match the target gateway's JWT_SECRET.
+##   make pressure JWT_SECRET=dev-secret-change-me USER_STEPS="10 50 200 500"
+pressure:
+	JWT_SECRET="$(JWT_SECRET)" PAIR="$(BENCH_PAIR)" USER_STEPS="$(USER_STEPS)" STEP_DURATION="$(STEP_DURATION)" \
+		./scripts/pressure_test.sh

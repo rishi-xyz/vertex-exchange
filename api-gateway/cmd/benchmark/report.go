@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// errorBucket is one printable line of the error breakdown, sorted by count
+// descending.
+type errorBucket struct {
+	key   string
+	count int64
+}
+
 type report struct {
 	users, usersFailedSetup, wsConnected, wsDisconnected int
 	pairStr                                              string
@@ -20,6 +27,8 @@ type report struct {
 	fillLatencies []time.Duration
 
 	cancelled int
+
+	errorBreakdown []errorBucket
 
 	runElapsed, gracePeriod, cleanupElapsed time.Duration
 }
@@ -61,6 +70,13 @@ func buildReport(workers []*worker, rc runConfig, failedSetup int, runElapsed, g
 	r.filled = int64(len(r.fillLatencies))
 	sort.Slice(r.placementLatencies, func(i, j int) bool { return r.placementLatencies[i] < r.placementLatencies[j] })
 	sort.Slice(r.fillLatencies, func(i, j int) bool { return r.fillLatencies[i] < r.fillLatencies[j] })
+
+	if rc.errTracker != nil {
+		for k, v := range rc.errTracker.snapshot() {
+			r.errorBreakdown = append(r.errorBreakdown, errorBucket{key: k, count: v})
+		}
+		sort.Slice(r.errorBreakdown, func(i, j int) bool { return r.errorBreakdown[i].count > r.errorBreakdown[j].count })
+	}
 	return r
 }
 
@@ -94,6 +110,12 @@ func (r *report) Print() {
 			float64(r.placed)/r.runElapsed.Seconds(), float64(r.ok)/r.runElapsed.Seconds())
 	}
 	fmt.Printf("placement latency (ok orders only):\n              %s\n", formatLatencies(r.placementLatencies))
+	if len(r.errorBreakdown) > 0 {
+		fmt.Println("error breakdown:")
+		for _, b := range r.errorBreakdown {
+			fmt.Printf("              %6d  %s\n", b.count, b.key)
+		}
+	}
 	fmt.Println()
 
 	fillRate := 0.0

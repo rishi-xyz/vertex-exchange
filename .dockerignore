@@ -1,0 +1,8 @@
+.git
+ai/
+logs/
+assets/
+engine/target
+engine/output
+**/*.log
+.env

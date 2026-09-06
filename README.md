@@ -42,14 +42,29 @@ make bench JWT_SECRET=dev-secret-change-me BENCH_USERS=200 BENCH_DURATION=60s
 See `api-gateway/cmd/benchmark -h` for the full set of flags (price/quantity jitter,
 fixed order count instead of duration, deposit sizing, cleanup toggle, etc).
 
+`make pressure` runs `bench` repeatedly at increasing user counts (`USER_STEPS`, default
+`10 25 50 100 200 400`) and prints a table of throughput/latency/fill-rate per step —
+useful for finding where capacity actually bends instead of guessing one number:
+
+```bash
+make pressure JWT_SECRET=dev-secret-change-me USER_STEPS="10 50 200 500" STEP_DURATION=20s
+```
+
+On this stack, order placement scales cleanly (linear ok/sec, sub-50ms p99) up to at
+least 400 concurrent users; the real bottleneck is the fills consumer, which processes
+fills sequentially through two Postgres writes each and falls behind well before
+placement does — watch `fill-p99` climb while `ok/sec` keeps scaling to see this
+directly.
+
 ## Project Layout
 
 ```
-engine/                    # Rust matching engine (tonic gRPC server)
-  discussions/prd.md       # original product/design notes
+engine/                     # Rust matching engine (tonic gRPC server)
+  discussions/prd.md        # original product/design notes
 api-gateway/                # Go REST + WebSocket service
 proto/                      # Shared protobuf definitions
 scripts/e2e.sh               # scripted end-to-end vertical-slice test
 scripts/seed.sh               # demo trading pairs + funded demo users
+scripts/pressure_test.sh      # capacity ramp test (see Benchmarking)
 docker-compose.yml            # postgres, redis, engine, gateway
 ```

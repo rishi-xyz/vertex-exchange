@@ -37,6 +37,7 @@ type runConfig struct {
 	seed       int64
 	duration   time.Duration
 	orderCount int // per-worker fixed count; 0 means duration-based
+	errTracker *errorTracker
 }
 
 func main() {
@@ -134,6 +135,7 @@ func main() {
 		seed:       rngSeed,
 		duration:   *duration,
 		orderCount: *ordersPerUser,
+		errTracker: newErrorTracker(),
 	}
 
 	for _, w := range workers {

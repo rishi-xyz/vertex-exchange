@@ -34,7 +34,9 @@ type setupConfig struct {
 // per-user failure is logged and drops that slot rather than aborting the
 // whole run.
 func setupWorkers(ctx context.Context, cfg setupConfig) ([]*worker, *grpcclient.Client, *pgxpool.Pool, error) {
-	pool, err := db.Open(ctx, cfg.databaseURL)
+	// A modest pool: setup is a short burst of inserts bounded by
+	// setupConcurrency, not sustained load.
+	pool, err := db.Open(ctx, cfg.databaseURL, 10)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("connect postgres: %w", err)
 	}

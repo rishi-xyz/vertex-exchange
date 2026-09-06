@@ -25,7 +25,7 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	pool, err := db.Open(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 	if err != nil {
 		log.Fatalf("database: %v", err)
 	}
