@@ -42,3 +42,48 @@ jobs:
 
       - name: Run tests
         run: cargo test
+
+  gateway:
+    name: Gateway build, test, fmt, vet
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api-gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Run tests
+        run: go test ./...
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build engine image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: engine/Dockerfile
+          push: false
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: api-gateway
+          push: false

@@ -38,7 +38,7 @@ All enter through the same **API Gateway / Load Balancer** in the Go layer.
 ### 3.2 Internal services
 - **REST API Service** — request/response (place/cancel/modify order, balances, history)
 - **WebSocket Server** — real-time push (`depth.<pair>`, `trade.<pair>`, `ticker.<pair>`)
-- **Auth Service (JWT/OAuth)** — deferred to V2
+- **Auth Service** — JWT (HS256) + bcrypt, implemented in V1; OAuth deferred to V2
 - **Balance Service** — user balance queries with Redis cache pre-check (fast-fail before gRPC)
 
 ### 3.3 Order critical path

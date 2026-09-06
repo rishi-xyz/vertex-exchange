@@ -25,5 +25,48 @@ services:
       timeout: 3s
       retries: 20
 
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    environment:
+      PORT: "5000"
+      REDIS_URL: redis://redis:6379
+      WAL_ENABLED: "${WAL_ENABLED:-false}"
+      WAL_PATH: /data/engine.wal
+      RUST_LOG: "${RUST_LOG:-info,engine=debug}"
+    volumes:
+      - engine_data:/data
+    ports:
+      - "5000:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    # The gateway dials the engine on boot and exits if it isn't up yet;
+    # restart rather than requiring a startup ordering probe.
+    restart: on-failure
+
+  gateway:
+    build:
+      context: api-gateway
+    environment:
+      GATEWAY_PORT: "8080"
+      ENGINE_GRPC_ADDR: engine:5000
+      DATABASE_URL: postgres://vertex:vertex@postgres:5432/vertex?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: "${JWT_SECRET:-dev-secret-change-me}"
+      JWT_TTL: "${JWT_TTL:-24h}"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      engine:
+        condition: service_started
+    restart: on-failure
+
 volumes:
   pgdata:
+  engine_data:

@@ -42,8 +42,12 @@ log "building engine"
 ( cd "$ENGINE" && cargo build --quiet ) || fail "build engine"
 
 log "starting infra"
-docker compose -f "$ROOT/docker-compose.yml" up -d --wait || fail "compose up"
-docker compose -f "$ROOT/docker-compose.yml" ps --format '{{.Name}} {{.Health}}' | sed 's/^/[e2e] infra /'
+# Only postgres/redis: engine and gateway are built and run as host
+# processes below so this script exercises the code under test, not the
+# docker images (docker-compose.yml also defines engine/gateway services,
+# used by `make up` for the fully containerized stack).
+docker compose -f "$ROOT/docker-compose.yml" up -d --wait postgres redis || fail "compose up"
+docker compose -f "$ROOT/docker-compose.yml" ps postgres redis --format '{{.Name}} {{.Health}}' | sed 's/^/[e2e] infra /'
 
 log "starting engine"
 ( cd "$ENGINE" && REDIS_URL="$REDIS_URL" PORT="$ENGINE_PORT" \
