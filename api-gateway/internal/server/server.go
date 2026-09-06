@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -196,17 +197,24 @@ func (s *Server) internalError(w http.ResponseWriter, action string, err error) 
 }
 
 func validEmail(email string) bool {
-	if len(email) > 254 || len(email) < 3 {
+	if len(email) < 3 || len(email) > 254 {
 		return false
 	}
-	at := -1
-	for i := 0; i < len(email); i++ {
-		if email[i] == '@' {
-			at = i
-			break
+	at := strings.Index(email, "@")
+	if at <= 0 || at != strings.LastIndex(email, "@") || at == len(email)-1 {
+		return false
+	}
+	if !strings.Contains(email[at+1:], ".") {
+		return false
+	}
+	for _, c := range email {
+		ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '@' || c == '.' || c == '_' || c == '-' || c == '+'
+		if !ok {
+			return false
 		}
 	}
-	return at > 0 && at < len(email)-1
+	return true
 }
 
 // grpcToHTTP maps engine gRPC status codes to HTTP status codes.
