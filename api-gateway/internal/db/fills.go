@@ -2,9 +2,10 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -24,71 +25,94 @@ type Fill struct {
 	AskQuantity int64
 }
 
-// AddTrade inserts a fill into the trades ledger, ignoring duplicates.
-func (s *Store) AddTrade(ctx context.Context, f Fill) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO trades (trade_id, pair, price, quantity, bid_order_id, ask_order_id, bid_user_id, ask_user_id, executed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9 / 1000000000.0))
-		 ON CONFLICT (trade_id) DO NOTHING`,
-		f.TradeID, f.Pair, f.BidPrice, f.BidQuantity,
-		f.BidOrderID, f.AskOrderID, f.BidUserID, f.AskUserID, f.Timestamp,
-	)
-	return err
-}
+// PersistFillBatch durably records a batch of fills in one transaction: a
+// bulk trade insert plus a single bulk order update. This is the durability
+// path only — notification is handled separately and does not wait on this
+// (see internal/liveorders and Server.OnFill), so this function's only job
+// is "don't lose the batch," not "notify anyone."
+//
+// Quantities are pre-aggregated per (engine_order_id, pair) across the whole
+// batch before the bulk UPDATE, because a single order can appear on either
+// side of more than one fill within one batch (e.g. a large taker crossing
+// several resting orders, or one resting order hit by several takers in
+// quick succession) — a naive UPDATE...FROM(VALUES...) with duplicate keys
+// in the VALUES list would apply only one of them, silently dropping the
+// rest.
+func (s *Store) PersistFillBatch(ctx context.Context, fills []Fill) error {
+	if len(fills) == 0 {
+		return nil
+	}
 
-// FillOrderUpdate is the post-fill state of one order side, returned so
-// callers can notify the owning account without a second round trip.
-type FillOrderUpdate struct {
-	OrderID   uuid.UUID
-	UserID    uuid.UUID
-	Pair      string
-	Status    string
-	Remaining int64
-}
-
-// ApplyFillToOrders decrements the resting quantity of both matched orders,
-// advances their status, and returns the resulting state of each.
-func (s *Store) ApplyFillToOrders(ctx context.Context, f Fill) ([]FillOrderUpdate, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer tx.Rollback(ctx)
 
-	var updates []FillOrderUpdate
-	for _, side := range []struct {
-		orderID  int64
-		quantity int64
-	}{
-		{f.BidOrderID, f.BidQuantity},
-		{f.AskOrderID, f.AskQuantity},
-	} {
-		var u FillOrderUpdate
-		err := tx.QueryRow(ctx,
-			`UPDATE orders
-			 SET remaining = remaining - $1,
-			     status = CASE
-			         WHEN remaining - $1 <= 0 THEN 'Filled'
-			         WHEN status = 'Empty' THEN 'PartiallyFilled'
-			         ELSE status
-			     END
-			 WHERE engine_order_id = $2 AND pair = $3
-			 RETURNING id, user_id, pair, status, remaining`,
-			side.quantity, side.orderID, f.Pair,
-		).Scan(&u.OrderID, &u.UserID, &u.Pair, &u.Status, &u.Remaining)
-		if err == pgx.ErrNoRows {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		updates = append(updates, u)
+	if err := insertTradesBatch(ctx, tx, fills); err != nil {
+		return fmt.Errorf("insert trades: %w", err)
+	}
+	if err := updateOrdersBatch(ctx, tx, fills); err != nil {
+		return fmt.Errorf("update orders: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+	return tx.Commit(ctx)
+}
+
+func insertTradesBatch(ctx context.Context, tx pgx.Tx, fills []Fill) error {
+	var sb strings.Builder
+	args := make([]any, 0, len(fills)*9)
+	for i, f := range fills {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		n := i * 9
+		fmt.Fprintf(&sb, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,to_timestamp($%d/1000000000.0))",
+			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9)
+		args = append(args, f.TradeID, f.Pair, f.BidPrice, f.BidQuantity,
+			f.BidOrderID, f.AskOrderID, f.BidUserID, f.AskUserID, f.Timestamp)
 	}
-	return updates, nil
+	query := `INSERT INTO trades (trade_id, pair, price, quantity, bid_order_id, ask_order_id, bid_user_id, ask_user_id, executed_at)
+		VALUES ` + sb.String() + ` ON CONFLICT (trade_id) DO NOTHING`
+	_, err := tx.Exec(ctx, query, args...)
+	return err
+}
+
+func updateOrdersBatch(ctx context.Context, tx pgx.Tx, fills []Fill) error {
+	type orderKey struct {
+		engineOrderID int64
+		pair          string
+	}
+	deltas := make(map[orderKey]int64, len(fills)*2)
+	for _, f := range fills {
+		deltas[orderKey{f.BidOrderID, f.Pair}] += f.BidQuantity
+		deltas[orderKey{f.AskOrderID, f.Pair}] += f.AskQuantity
+	}
+
+	var sb strings.Builder
+	args := make([]any, 0, len(deltas)*3)
+	i := 0
+	for k, qty := range deltas {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		n := i * 3
+		fmt.Fprintf(&sb, "($%d::bigint,$%d::text,$%d::bigint)", n+1, n+2, n+3)
+		args = append(args, k.engineOrderID, k.pair, qty)
+		i++
+	}
+
+	query := `UPDATE orders AS o
+		SET remaining = o.remaining - v.qty,
+		    status = CASE
+		        WHEN o.remaining - v.qty <= 0 THEN 'Filled'
+		        WHEN o.status = 'Empty' THEN 'PartiallyFilled'
+		        ELSE o.status
+		    END
+		FROM (VALUES ` + sb.String() + `) AS v(engine_order_id, pair, qty)
+		WHERE o.engine_order_id = v.engine_order_id AND o.pair = v.pair`
+	_, err := tx.Exec(ctx, query, args...)
+	return err
 }
 
 // TradeRecord mirrors one row of the trades ledger.

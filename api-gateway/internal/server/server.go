@@ -22,6 +22,7 @@ import (
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/config"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/grpcclient"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/liveorders"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/ratelimit"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/ws"
 )
@@ -37,12 +38,18 @@ type Server struct {
 	// pre-check fast-path and every check falls through to the engine.
 	balCache *balancecache.Cache
 
+	// registry is the hot-path live-order state used for instant fill
+	// notification (see internal/liveorders and OnFill in ws.go).
+	registry *liveorders.Registry
+
 	orderLimiter *ratelimit.Limiter
 	authLimiter  *ratelimit.Limiter
 }
 
 // New builds a Server. balCache may be nil to run without the balance
-// pre-check fast-path (e.g. Redis unavailable at boot).
+// pre-check fast-path (e.g. Redis unavailable at boot). Call
+// HydrateLiveOrders once after New to seed the live-order registry from
+// Postgres before starting the fills consumer.
 func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store, balCache *balancecache.Cache) *Server {
 	return &Server{
 		cfg:      cfg,
@@ -51,11 +58,34 @@ func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store, balCach
 		auth:     auth.NewManager(cfg.JWTSecret, cfg.JWTTTL),
 		hub:      ws.NewHub(),
 		balCache: balCache,
+		registry: liveorders.New(),
 		// 5 requests/sec, burst 10, per authenticated user.
 		orderLimiter: ratelimit.New(5, 10),
 		// 1 request/5s, burst 5, per source IP.
 		authLimiter: ratelimit.New(0.2, 5),
 	}
+}
+
+// HydrateLiveOrders seeds the live-order registry with every currently-open
+// order, so orders that existed before a gateway restart still get hot-path
+// fill notifications for their next fill (otherwise a fresh registry would
+// silently have no entry for them).
+func (s *Server) HydrateLiveOrders(ctx context.Context) error {
+	orders, err := s.store.ListOpenOrders(ctx)
+	if err != nil {
+		return err
+	}
+	for _, o := range orders {
+		s.registry.Put(o.EngineOrderID, liveorders.State{
+			OrderID:   o.ID,
+			UserID:    o.UserID,
+			Pair:      o.Pair,
+			Remaining: o.Remaining,
+			Status:    o.Status,
+		})
+	}
+	log.Printf("hydrated live-order registry with %d open orders", len(orders))
+	return nil
 }
 
 func (s *Server) Router() http.Handler {

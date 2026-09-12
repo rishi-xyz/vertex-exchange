@@ -14,6 +14,7 @@ import (
 
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/gen/engine"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/liveorders"
 )
 
 func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +200,9 @@ func (s *Server) handleSubmitOrder(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "persist order", err)
 		return
 	}
+	s.registry.Put(int64(resp.OrderId), liveorders.State{
+		OrderID: orderID, UserID: user.ID, Pair: pairName(pair), Remaining: int64(req.Quantity), Status: "Empty",
+	})
 	if s.balCache != nil {
 		base, quote, _ := splitPair(pairName(pair))
 		if orderSide == engine.Side_Buy {
@@ -311,6 +315,7 @@ func (s *Server) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "persist cancel", err)
 		return
 	}
+	s.registry.Delete(order.EngineOrderID)
 	if s.balCache != nil {
 		side, _ := sideFromStored(order.Side)
 		base, quote, _ := splitPair(order.Pair)
@@ -377,6 +382,11 @@ func (s *Server) handleModifyOrder(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "persist modify", err)
 		return
 	}
+	// Cancel-replace keeps the same engine_order_id, so this overwrites the
+	// existing registry entry with the fresh resting order's state.
+	s.registry.Put(order.EngineOrderID, liveorders.State{
+		OrderID: order.ID, UserID: user.ID, Pair: order.Pair, Remaining: int64(req.Quantity), Status: "Empty",
+	})
 	if s.balCache != nil {
 		base, quote, _ := splitPair(order.Pair)
 		if side == engine.Side_Buy {

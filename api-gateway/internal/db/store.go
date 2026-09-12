@@ -132,6 +132,31 @@ func (s *Store) ListOrders(ctx context.Context, userID uuid.UUID, pair, status s
 	return orders, rows.Err()
 }
 
+// ListOpenOrders returns every order not yet in a terminal state, across all
+// users. Used once at gateway boot to hydrate the in-memory live-order
+// registry (internal/liveorders) so orders that were already open before a
+// restart still get hot-path fill notifications.
+func (s *Store) ListOpenOrders(ctx context.Context) ([]*Order, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, pair, side, order_type, price, quantity, remaining, status, engine_order_id, created_at
+		 FROM orders WHERE status IN ('Empty', 'PartiallyFilled')`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []*Order
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.ID, &o.UserID, &o.Pair, &o.Side, &o.Type, &o.Price, &o.Quantity, &o.Remaining, &o.Status, &o.EngineOrderID, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		orders = append(orders, &o)
+	}
+	return orders, rows.Err()
+}
+
 // CancelOrder marks an order Cancelled. It is a no-op if the order is already
 // in a terminal state (Filled/Cancelled).
 func (s *Store) CancelOrder(ctx context.Context, id uuid.UUID) error {

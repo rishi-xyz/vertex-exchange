@@ -13,6 +13,7 @@ import (
 
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/gen/engine"
 	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/db"
+	"github.com/rishi-xyz/vertex-exchange/api-gateway/internal/liveorders"
 )
 
 var upgrader = websocket.Upgrader{
@@ -163,7 +164,7 @@ func (s *Server) broadcastTicker(pairStr string, price, quantity, timestampMs in
 
 // broadcastOrderUpdate pushes an order status change to its owner's personal
 // channel.
-func (s *Server) broadcastOrderUpdate(u db.FillOrderUpdate) {
+func (s *Server) broadcastOrderUpdate(u liveorders.State) {
 	msg, err := json.Marshal(map[string]any{
 		"type": "order",
 		"order": map[string]any{
@@ -179,11 +180,14 @@ func (s *Server) broadcastOrderUpdate(u db.FillOrderUpdate) {
 	s.hub.Broadcast(userTopic(u.UserID), msg)
 }
 
-// OnFill persists-then-pushes a fill to websocket subscribers: trade + ticker
-// events on the pair channel, and an order status update to each side's
-// personal channel. It also invalidates the balance pre-check cache for both
-// parties, since a fill moves funds on both sides of the pair.
-func (s *Server) OnFill(f db.Fill, updates []db.FillOrderUpdate) {
+// OnFill is the fills consumer's hot-path callback: it fires the instant a
+// fill is read off the Redis stream, before any Postgres write happens (see
+// internal/fills.Consumer.Run and internal/liveorders). Nothing here touches
+// the database — order status comes from the in-memory live-order registry,
+// trade/ticker data comes straight from the fill event, and depth comes from
+// the engine via gRPC — so none of this waits on the batched, asynchronous
+// persistence path.
+func (s *Server) OnFill(f db.Fill) {
 	s.broadcastTrade(f.Pair, map[string]any{
 		"trade_id":  f.TradeID,
 		"timestamp": f.Timestamp / 1_000_000,
@@ -203,9 +207,24 @@ func (s *Server) OnFill(f db.Fill, updates []db.FillOrderUpdate) {
 		},
 	})
 	s.broadcastTicker(f.Pair, f.BidPrice, f.BidQuantity, f.Timestamp/1_000_000)
-	for _, u := range updates {
-		s.broadcastOrderUpdate(u)
+
+	for _, side := range []struct {
+		orderID  int64
+		quantity int64
+	}{
+		{f.BidOrderID, f.BidQuantity},
+		{f.AskOrderID, f.AskQuantity},
+	} {
+		state, ok := s.registry.ApplyFill(side.orderID, side.quantity)
+		if !ok {
+			continue // not tracked (already terminal/evicted, or a stale process) — Postgres remains authoritative regardless
+		}
+		s.broadcastOrderUpdate(state)
+		if state.Status == "Filled" {
+			s.registry.Delete(side.orderID)
+		}
 	}
+
 	if s.balCache != nil {
 		if base, quote, ok := splitPair(f.Pair); ok {
 			ctx := context.Background()

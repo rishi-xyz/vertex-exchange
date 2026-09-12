@@ -48,6 +48,9 @@ func main() {
 	defer balCache.Close()
 
 	srv := server.New(cfg, engine, store, balCache)
+	if err := srv.HydrateLiveOrders(ctx); err != nil {
+		log.Fatalf("hydrate live orders: %v", err)
+	}
 
 	consumer, err := fills.New(cfg.RedisURL, store, srv.OnFill)
 	if err != nil {
