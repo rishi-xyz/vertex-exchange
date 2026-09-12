@@ -211,7 +211,7 @@ func (s *Server) handleSubmitOrder(w http.ResponseWriter, r *http.Request) {
 			s.balCache.Invalidate(r.Context(), user.EngineUserID, base)
 		}
 	}
-	go s.broadcastDepth(context.Background(), pairName(pair))
+	s.depthThrottle.Request(pairName(pair))
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"order": map[string]any{
@@ -325,7 +325,7 @@ func (s *Server) handleCancelOrder(w http.ResponseWriter, r *http.Request) {
 			s.balCache.Invalidate(r.Context(), user.EngineUserID, base)
 		}
 	}
-	go s.broadcastDepth(context.Background(), order.Pair)
+	s.depthThrottle.Request(order.Pair)
 	writeJSON(w, http.StatusOK, map[string]any{"cancelled": true, "order_id": order.ID.String()})
 }
 
@@ -395,7 +395,7 @@ func (s *Server) handleModifyOrder(w http.ResponseWriter, r *http.Request) {
 			s.balCache.Invalidate(r.Context(), user.EngineUserID, base)
 		}
 	}
-	go s.broadcastDepth(context.Background(), order.Pair)
+	s.depthThrottle.Request(order.Pair)
 
 	updated, err := s.store.GetOrderByID(r.Context(), order.ID)
 	if err != nil {

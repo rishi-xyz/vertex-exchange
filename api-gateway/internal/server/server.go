@@ -42,6 +42,10 @@ type Server struct {
 	// notification (see internal/liveorders and OnFill in ws.go).
 	registry *liveorders.Registry
 
+	// depthThrottle coalesces bursts of depth-refresh requests per pair
+	// (see depth_throttle.go) instead of one gRPC call per event.
+	depthThrottle *depthThrottler
+
 	orderLimiter *ratelimit.Limiter
 	authLimiter  *ratelimit.Limiter
 }
@@ -51,7 +55,7 @@ type Server struct {
 // HydrateLiveOrders once after New to seed the live-order registry from
 // Postgres before starting the fills consumer.
 func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store, balCache *balancecache.Cache) *Server {
-	return &Server{
+	s := &Server{
 		cfg:      cfg,
 		engine:   engine,
 		store:    store,
@@ -64,6 +68,13 @@ func New(cfg *config.Config, engine *grpcclient.Client, store *db.Store, balCach
 		// 1 request/5s, burst 5, per source IP.
 		authLimiter: ratelimit.New(0.2, 5),
 	}
+	// 100ms coalescing window: imperceptible staleness for a depth feed,
+	// but collapses a burst of per-event calls into a small, steady rate
+	// of actual engine round trips.
+	s.depthThrottle = newDepthThrottler(100*time.Millisecond, func(pair string) {
+		s.broadcastDepth(context.Background(), pair)
+	})
+	return s
 }
 
 // HydrateLiveOrders seeds the live-order registry with every currently-open

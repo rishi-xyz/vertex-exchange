@@ -234,5 +234,5 @@ func (s *Server) OnFill(f db.Fill) {
 			s.balCache.Invalidate(ctx, f.AskUserID, quote)
 		}
 	}
-	s.broadcastDepth(context.Background(), f.Pair)
+	s.depthThrottle.Request(f.Pair)
 }
